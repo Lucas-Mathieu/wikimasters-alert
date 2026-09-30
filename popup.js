@@ -35,13 +35,11 @@
     monitorDetail.className = `monitor-detail${isError ? " monitor-detail--error" : ""}`;
   }
 
-  function isWikiMastersUrl(url) {
-    try {
-      const origin = new URL(url).origin;
-      return origin === "https://www.wiki-masters.com" || origin === "https://wiki-masters.com";
-    } catch {
-      return false;
-    }
+  function formatDuration(seconds) {
+    const rounded = Math.max(0, Math.round(Number(seconds) || 0));
+    const minutes = Math.floor(rounded / 60);
+    const remainingSeconds = rounded % 60;
+    return minutes > 0 ? `${minutes} min ${remainingSeconds} s` : `${remainingSeconds} s`;
   }
 
   function renderAuctionControls(auctions) {
@@ -61,7 +59,7 @@
 
       const meta = document.createElement("span");
       meta.className = "auction-item__meta";
-      meta.textContent = `${auction.secondsRemaining} s restantes · ${auction.enabled ? "alerte active" : "alerte coupée"}`;
+      meta.textContent = `${formatDuration(auction.secondsRemaining)} restantes · ${auction.enabled ? "alerte active" : "alerte coupée"}`;
 
       const toggle = document.createElement("input");
       toggle.type = "checkbox";
@@ -105,15 +103,8 @@
   }
 
   async function refreshMonitorStatus() {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!isWikiMastersUrl(tab?.url)) {
-      renderAuctionControls([]);
-      setMonitorDetail("Ouvrez un onglet WikiMasters pour voir les enchères détectées.");
-      return;
-    }
-
     try {
-      const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_MONITOR_STATUS" });
+      const response = await chrome.runtime.sendMessage({ type: "GET_ALL_AUCTIONS" });
       if (!response?.ok) {
         throw new Error("Réponse de surveillance absente");
       }
@@ -128,25 +119,28 @@
         enabled: effectiveAuctionState(auction.id, stored)
       }));
 
-      if (!response.scannedAt) {
+      if (response.totalTabs === 0) {
         renderAuctionControls([]);
-        setMonitorDetail("Analyse de la page en cours…");
+        setMonitorDetail("Ouvrez une page d’enchère WikiMasters pour commencer.");
       } else if (auctions.length === 0) {
         renderAuctionControls([]);
-        setMonitorDetail("Aucune enchère active détectée sur cet onglet.", true);
+        const coverage = response.respondingTabs < response.totalTabs
+          ? ` (${response.respondingTabs}/${response.totalTabs} onglets analysés)`
+          : "";
+        setMonitorDetail(`Aucune enchère active détectée${coverage}.`, true);
       } else {
         renderAuctionControls(auctions);
         const closest = auctions.reduce((best, auction) =>
           auction.secondsRemaining < best.secondsRemaining ? auction : best
         );
         setMonitorDetail(
-          `${auctions.length} enchère${auctions.length > 1 ? "s" : ""} détectée${auctions.length > 1 ? "s" : ""} · ${closest.secondsRemaining} s restantes`
+          `${auctions.length} enchère${auctions.length > 1 ? "s" : ""} dans ${response.respondingTabs} onglet${response.respondingTabs > 1 ? "s" : ""} · prochaine dans ${formatDuration(closest.secondsRemaining)}`
         );
       }
     } catch (error) {
       console.debug("État du content script indisponible", error);
       renderAuctionControls([]);
-      setMonitorDetail("Rechargez cet onglet WikiMasters après avoir actualisé l’extension.", true);
+      setMonitorDetail("Impossible d’analyser les onglets WikiMasters ouverts.", true);
     }
   }
 

@@ -15,6 +15,7 @@ const SITE_ORIGINS = new Set([
   "https://www.wiki-masters.com",
   "https://wiki-masters.com"
 ]);
+const SITE_URL_PATTERNS = Array.from(SITE_ORIGINS, (origin) => `${origin}/*`);
 const PRIMARY_SITE_ORIGIN = "https://www.wiki-masters.com";
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const ALERT_HISTORY_KEY = "alertedAuctionCycles";
@@ -52,6 +53,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.error("WikiMasters Alert: test impossible", error);
         sendResponse({ ok: false, error: error.message });
       });
+    return true;
+  }
+
+  if (message.type === "GET_ALL_AUCTIONS") {
+    collectOpenAuctions()
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "OPEN_SETTINGS") {
+    openAuctionSettings(sender.tab)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
 
@@ -137,6 +152,75 @@ function isWikiMastersTab(tab) {
   } catch {
     return false;
   }
+}
+
+async function queryWikiMastersTabs() {
+  return chrome.tabs.query({ url: SITE_URL_PATTERNS });
+}
+
+async function collectOpenAuctions() {
+  const tabs = (await queryWikiMastersTabs()).filter(isWikiMastersTab);
+  const responses = await Promise.all(tabs.map(async (tab) => {
+    try {
+      const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_MONITOR_STATUS" });
+      return response?.ok ? { tab, response } : null;
+    } catch {
+      return null;
+    }
+  }));
+
+  const auctionsById = new Map();
+  let respondingTabs = 0;
+
+  for (const entry of responses) {
+    if (!entry) continue;
+    respondingTabs += 1;
+
+    for (const auction of entry.response.auctions || []) {
+      const normalized = {
+        id: String(auction.id || "").slice(0, 300),
+        title: String(auction.title || "Enchère WikiMasters").trim().slice(0, 160),
+        secondsRemaining: Math.max(0, Math.round(Number(auction.secondsRemaining) || 0)),
+        tabId: entry.tab.id,
+        windowId: entry.tab.windowId,
+        pageUrl: entry.tab.url
+      };
+      if (!normalized.id || normalized.secondsRemaining <= 0) continue;
+
+      const previous = auctionsById.get(normalized.id);
+      if (!previous || normalized.secondsRemaining < previous.secondsRemaining) {
+        auctionsById.set(normalized.id, normalized);
+      }
+    }
+  }
+
+  return {
+    auctions: Array.from(auctionsById.values()).sort(
+      (left, right) => left.secondsRemaining - right.secondsRemaining
+    ),
+    totalTabs: tabs.length,
+    respondingTabs
+  };
+}
+
+async function openAuctionSettings(tab) {
+  if (chrome.action?.openPopup) {
+    try {
+      await chrome.action.openPopup(tab?.windowId ? { windowId: tab.windowId } : undefined);
+      return { mode: "action-popup" };
+    } catch {
+      // Certaines versions refusent encore openPopup() depuis un content script.
+    }
+  }
+
+  const created = await chrome.windows.create({
+    url: chrome.runtime.getURL("popup.html?mode=window"),
+    type: "popup",
+    width: 390,
+    height: 700,
+    focused: true
+  });
+  return { mode: "window", windowId: created.id };
 }
 
 function validateAuctionPayload(auction, sender) {
@@ -426,9 +510,7 @@ async function findWikiMastersTab() {
     return activeWikiMastersTab;
   }
 
-  const siteTabs = await chrome.tabs.query({
-    url: Array.from(SITE_ORIGINS, (origin) => `${origin}/*`)
-  });
+  const siteTabs = await queryWikiMastersTabs();
   return siteTabs.find((tab) => tab.active) || siteTabs[0] || null;
 }
 

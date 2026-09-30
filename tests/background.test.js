@@ -7,6 +7,9 @@ const vm = require("node:vm");
 
 let customWindowError = null;
 let createdWindow = null;
+let popupOpenedForWindow = null;
+let queryTabs = null;
+let tabResponses = new Map();
 let sessionStore = {};
 let localSettings = {
   enabled: true,
@@ -50,9 +53,16 @@ const chrome = {
     }
   },
   tabs: {
-    query: async () => [wikiTab],
+    query: async () => queryTabs || [wikiTab],
+    sendMessage: async (tabId) => {
+      if (!tabResponses.has(tabId)) throw new Error("content script absent");
+      return tabResponses.get(tabId);
+    },
     get: async () => wikiTab,
     update: async () => wikiTab
+  },
+  action: {
+    openPopup: async ({ windowId } = {}) => { popupOpenedForWindow = windowId ?? null; }
   },
   windows: {
     create: async (options) => {
@@ -113,7 +123,43 @@ vm.runInContext(source, context, { filename: "background.js" });
     auctionAlertOverrides: { "auction-new": true }
   }, "auction-new")`, context), true);
 
-  console.log("Fenêtre Chrome, gestion d’erreur et désactivation par enchère validées.");
+  const manyTabs = Array.from({ length: 15 }, (_, index) => ({
+    id: 100 + index,
+    windowId: index < 8 ? 10 : 11,
+    url: `https://wiki-masters.com/marketplace/auction-${index + 1}`
+  }));
+  queryTabs = manyTabs;
+  tabResponses = new Map(manyTabs.map((tab, index) => [tab.id, {
+    ok: true,
+    scannedAt: Date.now(),
+    auctions: [{
+      id: `page:/marketplace/auction-${index + 1}`,
+      title: `Enchère ${index + 1}`,
+      secondsRemaining: 900 - index * 10
+    }]
+  }]));
+
+  const allAuctions = await vm.runInContext("collectOpenAuctions()", context);
+  assert.equal(allAuctions.totalTabs, 15);
+  assert.equal(allAuctions.respondingTabs, 15);
+  assert.equal(allAuctions.auctions.length, 15);
+  assert.equal(allAuctions.auctions[0].title, "Enchère 15");
+  assert.equal(allAuctions.auctions[14].title, "Enchère 1");
+
+  tabResponses.delete(manyTabs[4].id);
+  const withOneSleepingTab = await vm.runInContext("collectOpenAuctions()", context);
+  assert.equal(withOneSleepingTab.totalTabs, 15);
+  assert.equal(withOneSleepingTab.respondingTabs, 14);
+  assert.equal(withOneSleepingTab.auctions.length, 14);
+
+  const settingsWindow = await vm.runInContext(
+    `openAuctionSettings(${JSON.stringify(wikiTab)})`,
+    context
+  );
+  assert.equal(settingsWindow.mode, "action-popup");
+  assert.equal(popupOpenedForWindow, wikiTab.windowId);
+
+  console.log("Alertes, ouverture des réglages et agrégation de 15 onglets validées.");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;
