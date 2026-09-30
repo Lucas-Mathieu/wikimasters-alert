@@ -4,7 +4,10 @@
   "version": "1.0.0",
   "description": "Alerte avant la fin des enchères ouvertes sur WikiMasters.",
   "permissions": [
-    "storage"
+    "storage",
+    "notifications",
+    "tabs",
+    "offscreen"
   ],
   "host_permissions": [
     "https://www.wiki-masters.com/*"
@@ -20,6 +23,9 @@
       "run_at": "document_idle"
     }
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_title": "WikiMasters Auction Alert",
     "default_popup": "popup.html",
