@@ -21,12 +21,15 @@ const PRIMARY_SITE_ORIGIN = "https://www.wiki-masters.com";
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const ALERT_HISTORY_KEY = "alertedAuctionCycles";
 const CUSTOM_ALERTS_KEY = "customAlertWindows";
+const SCHEDULED_AUCTIONS_KEY = "scheduledAuctionAlerts";
+const AUCTION_ALARM_PREFIX = "wikimasters-auction:";
 const HISTORY_TTL_MS = 24 * 60 * 60 * 1000;
 
 const processingCycles = new Set();
 let creatingOffscreenDocument = null;
 let cycleClaimQueue = Promise.resolve();
 let customAlertMutationQueue = Promise.resolve();
+let scheduledAuctionMutationQueue = Promise.resolve();
 
 chrome.runtime.onInstalled.addListener(() => {
   initializeDefaultSettings().catch((error) => {
@@ -44,6 +47,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then((result) => sendResponse({ ok: true, ...result }))
       .catch((error) => {
         console.error("WikiMasters Alert: alerte impossible", error);
+        sendResponse({ ok: false, error: error.message });
+      });
+    return true;
+  }
+
+  if (message.type === "AUCTION_SNAPSHOT") {
+    scheduleAuctionAlert(message.auction, sender)
+      .then((result) => sendResponse({ ok: true, ...result }))
+      .catch((error) => {
+        console.error("WikiMasters Alert: programmation impossible", error);
         sendResponse({ ok: false, error: error.message });
       });
     return true;
@@ -92,6 +105,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 chrome.windows.onRemoved.addListener((windowId) => {
   removeCustomAlertByWindowId(windowId).catch(() => {});
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  handleAuctionAlarm(alarm).catch((error) => {
+    console.error("WikiMasters Alert: alarme impossible", error);
+  });
 });
 
 async function initializeDefaultSettings() {
@@ -251,6 +270,123 @@ function validateAuctionPayload(auction, sender) {
     secondsRemaining: Math.round(secondsRemaining),
     pageUrl: String(auction.pageUrl || sender.tab.url).slice(0, 2000)
   };
+}
+
+function hashString(value) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function auctionAlarmName(auctionId) {
+  return `${AUCTION_ALARM_PREFIX}${hashString(auctionId)}`;
+}
+
+async function scheduleAuctionAlert(rawAuction, sender) {
+  const auction = validateAuctionPayload(rawAuction, sender);
+  const settings = await getSettings();
+  const alarmName = auctionAlarmName(auction.id);
+
+  if (!settings.enabled || !isAuctionAlertEnabled(settings, auction.id)) {
+    await removeScheduledAuction(alarmName);
+    return { scheduled: false, reason: "disabled" };
+  }
+
+  const now = Date.now();
+  const thresholdSeconds = auctionThresholdSeconds(settings, auction.id);
+  const estimatedEndAt = now + auction.secondsRemaining * 1000;
+  const scheduledFor = estimatedEndAt - thresholdSeconds * 1000;
+
+  if (scheduledFor <= now + 250) {
+    await removeScheduledAuction(alarmName);
+    return handleAuctionAlert(auction, sender);
+  }
+
+  await mutateScheduledAuctions((scheduled) => {
+    scheduled[alarmName] = {
+      auction,
+      tabId: sender.tab.id,
+      windowId: sender.tab.windowId,
+      pageUrl: sender.tab.url,
+      estimatedEndAt,
+      scheduledFor
+    };
+  });
+  await chrome.alarms.create(alarmName, { when: scheduledFor });
+
+  return { scheduled: true, scheduledFor };
+}
+
+async function handleAuctionAlarm(alarm) {
+  if (!alarm?.name?.startsWith(AUCTION_ALARM_PREFIX)) return;
+
+  const scheduled = await getScheduledAuctions();
+  const entry = scheduled[alarm.name];
+  if (!entry) return;
+
+  const settings = await getSettings();
+  if (!settings.enabled || !isAuctionAlertEnabled(settings, entry.auction.id)) {
+    await removeScheduledAuction(alarm.name);
+    return { accepted: false, reason: "disabled" };
+  }
+
+  let tab;
+  try {
+    tab = await chrome.tabs.get(entry.tabId);
+  } catch {
+    await removeScheduledAuction(alarm.name);
+    return { accepted: false, reason: "tab-closed" };
+  }
+
+  if (!isWikiMastersTab(tab) || tab.url !== entry.pageUrl) {
+    await removeScheduledAuction(alarm.name);
+    return { accepted: false, reason: "page-changed" };
+  }
+
+  const now = Date.now();
+  const thresholdSeconds = auctionThresholdSeconds(settings, entry.auction.id);
+  const desiredTime = entry.estimatedEndAt - thresholdSeconds * 1000;
+
+  if (desiredTime > now + 250) {
+    await mutateScheduledAuctions((items) => {
+      if (items[alarm.name]) items[alarm.name].scheduledFor = desiredTime;
+    });
+    await chrome.alarms.create(alarm.name, { when: desiredTime });
+    return { accepted: false, reason: "rescheduled" };
+  }
+
+  const secondsRemaining = Math.max(1, Math.floor((entry.estimatedEndAt - now) / 1000));
+  const result = await handleAuctionAlert(
+    { ...entry.auction, secondsRemaining },
+    { tab }
+  );
+  await removeScheduledAuction(alarm.name);
+  return result;
+}
+
+async function getScheduledAuctions() {
+  const stored = await chrome.storage.session.get(SCHEDULED_AUCTIONS_KEY);
+  return stored[SCHEDULED_AUCTIONS_KEY] || {};
+}
+
+function mutateScheduledAuctions(mutator) {
+  const mutation = scheduledAuctionMutationQueue.then(async () => {
+    const scheduled = await getScheduledAuctions();
+    mutator(scheduled);
+    await chrome.storage.session.set({ [SCHEDULED_AUCTIONS_KEY]: scheduled });
+  });
+  scheduledAuctionMutationQueue = mutation.catch(() => {});
+  return mutation;
+}
+
+async function removeScheduledAuction(alarmName) {
+  await chrome.alarms.clear(alarmName);
+  await mutateScheduledAuctions((scheduled) => {
+    delete scheduled[alarmName];
+  });
 }
 
 async function handleAuctionAlert(rawAuction, sender) {

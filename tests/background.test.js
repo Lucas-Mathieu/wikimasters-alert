@@ -14,6 +14,8 @@ let tabResponses = new Map();
 let browserWindowState = "normal";
 let windowUpdates = [];
 let focusRequestAccepted = true;
+let createdAlarms = [];
+let clearedAlarms = [];
 let sessionStore = {};
 let localSettings = {
   enabled: true,
@@ -30,7 +32,8 @@ let localSettings = {
 const listeners = {
   installed: null,
   message: null,
-  windowRemoved: null
+  windowRemoved: null,
+  alarm: null
 };
 
 const wikiTab = {
@@ -68,6 +71,11 @@ const chrome = {
   },
   action: {
     openPopup: async ({ windowId } = {}) => { popupOpenedForWindow = windowId ?? null; }
+  },
+  alarms: {
+    create: async (name, options) => { createdAlarms.push({ name, options }); },
+    clear: async (name) => { clearedAlarms.push(name); return true; },
+    onAlarm: { addListener: (listener) => { listeners.alarm = listener; } }
   },
   windows: {
     create: async (options) => {
@@ -113,6 +121,7 @@ vm.runInContext(source, context, { filename: "background.js" });
 
   assert.ok(listeners.message, "Le service worker doit écouter les messages");
   assert.ok(listeners.windowRemoved, "La fermeture de la fenêtre doit être gérée");
+  assert.ok(listeners.alarm, "Les alarmes différées doivent être écoutées");
 
   localSettings.disabledAuctionIds = ["auction-42"];
   const disabled = await vm.runInContext(
@@ -200,6 +209,45 @@ vm.runInContext(source, context, { filename: "background.js" });
   focusRequestAccepted = true;
 
   customWindowError = null;
+  createdAlarms = [];
+  clearedAlarms = [];
+  const scheduledAlert = await vm.runInContext(
+    `scheduleAuctionAlert({
+      id: "scheduled-auction",
+      cycleId: "scheduled-auction:1",
+      title: "Enchère programmée",
+      secondsRemaining: 120
+    }, { tab: ${JSON.stringify(wikiTab)} })`,
+    context
+  );
+  assert.equal(scheduledAlert.scheduled, true);
+  assert.equal(createdAlarms.length, 1);
+  assert.ok(createdAlarms[0].options.when > Date.now() + 70000);
+
+  const scheduledAlarmName = createdAlarms[0].name;
+  sessionStore.scheduledAuctionAlerts[scheduledAlarmName].estimatedEndAt = Date.now() + 10000;
+  const alarmResult = await vm.runInContext(
+    `handleAuctionAlarm({ name: ${JSON.stringify(scheduledAlarmName)} })`,
+    context
+  );
+  assert.equal(alarmResult.accepted, true);
+  assert.ok(clearedAlarms.includes(scheduledAlarmName));
+  assert.equal(sessionStore.scheduledAuctionAlerts[scheduledAlarmName], undefined);
+
+  createdAlarms = [];
+  const scheduledAcrossTabs = await Promise.all(manyTabs.map((tab, index) => vm.runInContext(
+    `scheduleAuctionAlert({
+      id: "scheduled-${index + 1}",
+      cycleId: "scheduled-${index + 1}:1",
+      title: "Programmée ${index + 1}",
+      secondsRemaining: ${120 + index}
+    }, { tab: ${JSON.stringify(tab)} })`,
+    context
+  )));
+  assert.equal(scheduledAcrossTabs.filter((result) => result.scheduled).length, 15);
+  assert.equal(createdAlarms.length, 15);
+  assert.equal(Object.keys(sessionStore.scheduledAuctionAlerts || {}).length, 15);
+
   createdWindows = [];
   localSettings.disabledAuctionIds = [];
   const simultaneousAlerts = await Promise.all(manyTabs.map((tab, index) => vm.runInContext(
@@ -222,7 +270,7 @@ vm.runInContext(source, context, { filename: "background.js" });
     15
   );
 
-  console.log("Réglages par enchère, agrégation et 15 alertes simultanées validés.");
+  console.log("Déclenchement différé, agrégation et 15 enchères simultanées validés.");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

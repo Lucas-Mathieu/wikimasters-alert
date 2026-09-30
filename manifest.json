@@ -2,12 +2,13 @@
   "manifest_version": 3,
   "minimum_chrome_version": "109",
   "name": "WikiMasters Auction Alert",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Alerte avant la fin des enchères ouvertes sur WikiMasters.",
   "permissions": [
     "storage",
     "tabs",
-    "offscreen"
+    "offscreen",
+    "alarms"
   ],
   "host_permissions": [
     "https://www.wiki-masters.com/*",

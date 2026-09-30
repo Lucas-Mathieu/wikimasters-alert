@@ -15,6 +15,7 @@
   const MIN_MUTATION_SCAN_INTERVAL_MS = 500;
   const FORGOTTEN_AUCTION_MS = 2 * 60 * 1000;
   const auctionCycles = new Map();
+  const auctionReports = new Map();
 
   let settings = { ...DEFAULT_SETTINGS };
   let scheduledScan = null;
@@ -658,14 +659,14 @@
   }
 
   function cycleForAuction(auction, now) {
-    const estimatedEndAt = now + auction.secondsRemaining * 1000;
+    const observedEndAt = now + auction.secondsRemaining * 1000;
     const previous = auctionCycles.get(auction.id);
     const timerJumpedForward = previous && auction.secondsRemaining > previous.lastSeconds + 10;
-    const endTimeChanged = previous && Math.abs(estimatedEndAt - previous.estimatedEndAt) > 15000;
 
-    if (!previous || timerJumpedForward || endTimeChanged) {
+    if (!previous || timerJumpedForward) {
       const cycle = {
-        estimatedEndAt,
+        estimatedEndAt: observedEndAt,
+        cycleId: `${auction.id}:${Math.round(observedEndAt / 10000)}`,
         lastSeconds: auction.secondsRemaining,
         lastSeenAt: now,
         alerted: false
@@ -674,7 +675,10 @@
       return cycle;
     }
 
-    previous.estimatedEndAt = Math.round((previous.estimatedEndAt * 3 + estimatedEndAt) / 4);
+    const correctedEndAt = observedEndAt > previous.estimatedEndAt + 3000
+      ? previous.estimatedEndAt
+      : observedEndAt;
+    previous.estimatedEndAt = Math.round((previous.estimatedEndAt * 3 + correctedEndAt) / 4);
     previous.lastSeconds = auction.secondsRemaining;
     previous.lastSeenAt = now;
     return previous;
@@ -690,13 +694,49 @@
           id: auction.id,
           title: auction.title,
           secondsRemaining: auction.secondsRemaining,
-          cycleId: `${auction.id}:${Math.round(cycle.estimatedEndAt / 10000)}`,
+          cycleId: cycle.cycleId,
           pageUrl: location.href
         }
       },
       () => {
         if (chrome.runtime.lastError) {
           console.debug("WikiMasters Alert: service worker indisponible", chrome.runtime.lastError.message);
+        }
+      }
+    );
+  }
+
+  function reportAuctionSnapshot(auction, cycle, now) {
+    const thresholdSeconds = auctionThresholdSeconds(auction.id);
+    const previous = auctionReports.get(auction.id);
+    const shouldReport =
+      !previous ||
+      Math.abs(previous.estimatedEndAt - cycle.estimatedEndAt) > 3000 ||
+      previous.thresholdSeconds !== thresholdSeconds ||
+      now - previous.reportedAt >= 30000;
+
+    if (!shouldReport) return;
+
+    auctionReports.set(auction.id, {
+      estimatedEndAt: cycle.estimatedEndAt,
+      thresholdSeconds,
+      reportedAt: now
+    });
+
+    chrome.runtime.sendMessage(
+      {
+        type: "AUCTION_SNAPSHOT",
+        auction: {
+          id: auction.id,
+          title: auction.title,
+          secondsRemaining: auction.secondsRemaining,
+          cycleId: cycle.cycleId,
+          pageUrl: location.href
+        }
+      },
+      () => {
+        if (chrome.runtime.lastError) {
+          console.debug("WikiMasters Alert: programmation différée indisponible", chrome.runtime.lastError.message);
         }
       }
     );
@@ -735,6 +775,7 @@
       }
 
       const cycle = cycleForAuction(auction, now);
+      reportAuctionSnapshot(auction, cycle, now);
       if (!cycle.alerted && auction.secondsRemaining <= auctionThresholdSeconds(auction.id)) {
         sendThresholdAlert(auction, cycle);
       }
@@ -743,6 +784,7 @@
     for (const [id, cycle] of auctionCycles) {
       if (now - cycle.lastSeenAt > FORGOTTEN_AUCTION_MS) {
         auctionCycles.delete(id);
+        auctionReports.delete(id);
       }
     }
   }
@@ -776,8 +818,10 @@
 
       if (!settings.enabled) {
         auctionCycles.clear();
+        auctionReports.clear();
         removePageAuctionToggle();
       } else if (shouldScan) {
+        auctionReports.clear();
         scheduleScan();
       }
     });
@@ -813,6 +857,7 @@
       isAuctionDetailPage,
       findLabeledCountdownElements,
       isUsableAuctionTitle,
+      cycleForAuction,
       parseCountdown,
       readEmbeddedTimerValue
     });

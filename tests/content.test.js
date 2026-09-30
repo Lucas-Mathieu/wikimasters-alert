@@ -38,6 +38,24 @@ assert.equal(detector.indicatesClosedAuction("Expire dans 49s"), false);
 assert.equal(detector.indicatesClosedAuction("Enchère terminée"), true);
 assert.equal(detector.isUsableAuctionTitle({ textContent: "WikiMasters" }, {}), false);
 assert.equal(detector.isUsableAuctionTitle({ textContent: "Yakuza 5" }, {}), true);
+
+const initialCycle = detector.cycleForAuction(
+  { id: "minimized-auction", secondsRemaining: 120 },
+  1_000_000
+);
+const frozenTimerCycle = detector.cycleForAuction(
+  { id: "minimized-auction", secondsRemaining: 120 },
+  1_060_000
+);
+assert.equal(frozenTimerCycle.cycleId, initialCycle.cycleId);
+assert.equal(frozenTimerCycle.estimatedEndAt, initialCycle.estimatedEndAt);
+
+const extendedCycle = detector.cycleForAuction(
+  { id: "minimized-auction", secondsRemaining: 180 },
+  1_061_000
+);
+assert.notEqual(extendedCycle.cycleId, initialCycle.cycleId);
+assert.equal(extendedCycle.estimatedEndAt, 1_241_000);
 assert.deepEqual(
   JSON.parse(JSON.stringify(detector.readEmbeddedTimerValue({ textContent: "Mise 60 · dans 1m 11s" }))),
   { seconds: 71, sourceText: "dans 1m 11s" }
