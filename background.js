@@ -517,8 +517,19 @@ async function openCustomAlertTarget(rawAlertId) {
 
 async function focusTab(tabId, knownWindowId) {
   const tab = await chrome.tabs.get(tabId);
+  const windowId = tab.windowId ?? knownWindowId;
+  const browserWindow = await chrome.windows.get(windowId);
+
+  if (browserWindow.state === "minimized") {
+    await chrome.windows.update(windowId, { state: "normal" });
+  }
+
   await chrome.tabs.update(tabId, { active: true });
-  await chrome.windows.update(tab.windowId ?? knownWindowId, { focused: true });
+  const focusedWindow = await chrome.windows.update(windowId, { focused: true });
+
+  if (focusedWindow?.focused === false) {
+    await chrome.windows.update(windowId, { drawAttention: true });
+  }
 }
 
 async function findWikiMastersTab() {

@@ -51,6 +51,8 @@ La popup regroupe toutes les enchères reconnues dans l’ensemble des onglets W
 
 Le canal visuel ouvre une petite fenêtre Chrome interne à l’extension. Il ne dépend pas des notifications Windows ni du mode *Ne pas déranger*. Le bouton **Voir l’enchère** ramène à l’onglet d’origine.
 
+Lorsque **Mettre l’onglet au premier plan** est activé, une fenêtre Chrome minimisée est d’abord restaurée avant l’activation de l’onglet. Si le système refuse le changement de focus, Chrome demande au minimum l’attention dans la barre des tâches.
+
 Chaque enchère reconnue apparaît dans la popup avec son propre interrupteur et son propre délai d’alerte. Désactiver l’interrupteur ou modifier le délai ne concerne que cette enchère ; les autres restent surveillées. Ces choix sont conservés dans le stockage local de l’extension.
 
 Sur une page détail d’enchère, un interrupteur **Alerte pour cette enchère** est aussi affiché directement en bas à droite de la page. Cliquer sur son logo **W** ouvre les paramètres de l’extension. L’option **Alertes actives par défaut** de la popup choisit l’état initial des enchères qui n’ont pas encore de préférence individuelle.

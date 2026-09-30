@@ -11,6 +11,9 @@ let createdWindows = [];
 let popupOpenedForWindow = null;
 let queryTabs = null;
 let tabResponses = new Map();
+let browserWindowState = "normal";
+let windowUpdates = [];
+let focusRequestAccepted = true;
 let sessionStore = {};
 let localSettings = {
   enabled: true,
@@ -73,7 +76,16 @@ const chrome = {
       createdWindows.push(createdWindow);
       return { id: 81 };
     },
-    update: async () => ({}),
+    get: async (windowId) => ({ id: windowId, state: browserWindowState, focused: false }),
+    update: async (windowId, options) => {
+      windowUpdates.push({ windowId, options });
+      if (options.state) browserWindowState = options.state;
+      return {
+        id: windowId,
+        state: browserWindowState,
+        focused: options.focused === true && focusRequestAccepted
+      };
+    },
     onRemoved: { addListener: (listener) => { listeners.windowRemoved = listener; } }
   },
   offscreen: {
@@ -169,6 +181,23 @@ vm.runInContext(source, context, { filename: "background.js" });
   );
   assert.equal(settingsWindow.mode, "action-popup");
   assert.equal(popupOpenedForWindow, wikiTab.windowId);
+
+  browserWindowState = "minimized";
+  windowUpdates = [];
+  await vm.runInContext(`focusTab(${wikiTab.id}, ${wikiTab.windowId})`, context);
+  assert.deepEqual(JSON.parse(JSON.stringify(windowUpdates)), [
+    { windowId: wikiTab.windowId, options: { state: "normal" } },
+    { windowId: wikiTab.windowId, options: { focused: true } }
+  ]);
+
+  focusRequestAccepted = false;
+  windowUpdates = [];
+  await vm.runInContext(`focusTab(${wikiTab.id}, ${wikiTab.windowId})`, context);
+  assert.deepEqual(JSON.parse(JSON.stringify(windowUpdates)), [
+    { windowId: wikiTab.windowId, options: { focused: true } },
+    { windowId: wikiTab.windowId, options: { drawAttention: true } }
+  ]);
+  focusRequestAccepted = true;
 
   customWindowError = null;
   createdWindows = [];
