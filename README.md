@@ -25,6 +25,9 @@ wikimasters-alert/
 ├── manifest.json
 ├── background.js
 ├── content.js
+├── alert.html
+├── alert.js
+├── alert.css
 ├── popup.html
 ├── popup.js
 ├── popup.css
@@ -47,6 +50,8 @@ Exécuter `node tests/content.test.js` puis `node tests/background.test.js` depu
 La popup affiche aussi le nombre d’enchères reconnues dans l’onglet WikiMasters actif. Après une mise à jour de l’extension, il faut recharger cet onglet pour injecter la nouvelle version du détecteur.
 
 Le canal visuel ouvre une petite fenêtre Chrome interne à l’extension. Il ne dépend pas des notifications Windows ni du mode *Ne pas déranger*. Le bouton **Voir l’enchère** ramène à l’onglet d’origine.
+
+Chaque enchère reconnue dans l’onglet actif apparaît également dans la popup avec son propre interrupteur. Désactiver cet interrupteur coupe uniquement cette enchère ; les autres restent surveillées. Ce choix est conservé dans le stockage local de l’extension.
 
 ## Ajuster la détection du site
 

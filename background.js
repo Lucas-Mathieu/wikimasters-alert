@@ -5,7 +5,8 @@ const DEFAULT_SETTINGS = Object.freeze({
   showNotification: true,
   playSound: true,
   bringToFront: false,
-  thresholdSeconds: 30
+  thresholdSeconds: 30,
+  disabledAuctionIds: []
 });
 
 const SITE_ORIGIN = "https://www.wiki-masters.com";
@@ -91,6 +92,9 @@ function normalizeSettings(stored) {
     showNotification: stored.showNotification !== false,
     playSound: stored.playSound !== false,
     bringToFront: stored.bringToFront === true,
+    disabledAuctionIds: Array.isArray(stored.disabledAuctionIds)
+      ? stored.disabledAuctionIds.filter((id) => typeof id === "string").slice(0, 500)
+      : [],
     thresholdSeconds: Number.isFinite(parsedThreshold)
       ? Math.min(86400, Math.max(1, parsedThreshold))
       : DEFAULT_SETTINGS.thresholdSeconds
@@ -139,6 +143,10 @@ async function handleAuctionAlert(rawAuction, sender) {
 
   if (!settings.enabled) {
     return { accepted: false, reason: "disabled" };
+  }
+
+  if (settings.disabledAuctionIds.includes(auction.id)) {
+    return { accepted: false, reason: "auction-disabled" };
   }
 
   if (auction.secondsRemaining > settings.thresholdSeconds) {

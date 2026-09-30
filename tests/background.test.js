@@ -8,6 +8,14 @@ const vm = require("node:vm");
 let customWindowError = null;
 let createdWindow = null;
 let sessionStore = {};
+let localSettings = {
+  enabled: true,
+  showNotification: true,
+  playSound: false,
+  bringToFront: false,
+  thresholdSeconds: 40,
+  disabledAuctionIds: []
+};
 
 const listeners = {
   installed: null,
@@ -31,13 +39,7 @@ const chrome = {
   },
   storage: {
     local: {
-      get: async () => ({
-        enabled: true,
-        showNotification: true,
-        playSound: false,
-        bringToFront: false,
-        thresholdSeconds: 40
-      }),
+      get: async () => ({ ...localSettings }),
       set: async () => {}
     },
     session: {
@@ -85,7 +87,20 @@ vm.runInContext(source, context, { filename: "background.js" });
   assert.ok(listeners.message, "Le service worker doit écouter les messages");
   assert.ok(listeners.windowRemoved, "La fermeture de la fenêtre doit être gérée");
 
-  console.log("Fenêtre d’alerte Chrome et gestion d’erreur validées.");
+  localSettings.disabledAuctionIds = ["auction-42"];
+  const disabled = await vm.runInContext(
+    `handleAuctionAlert({
+      id: "auction-42",
+      cycleId: "auction-42:1",
+      title: "Carte test",
+      secondsRemaining: 20
+    }, { tab: ${JSON.stringify(wikiTab)} })`,
+    context
+  );
+  assert.equal(disabled.accepted, false);
+  assert.equal(disabled.reason, "auction-disabled");
+
+  console.log("Fenêtre Chrome, gestion d’erreur et désactivation par enchère validées.");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

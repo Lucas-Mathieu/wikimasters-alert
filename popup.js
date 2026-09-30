@@ -16,6 +16,8 @@
   const statusElement = document.getElementById("status");
   const monitorDetail = document.getElementById("monitorDetail");
   const testButton = document.getElementById("testAlert");
+  const auctionControls = document.getElementById("auctionControls");
+  const auctionList = document.getElementById("auctionList");
 
   function normalizeThreshold(value) {
     const parsed = Number.parseInt(value, 10);
@@ -32,9 +34,60 @@
     monitorDetail.className = `monitor-detail${isError ? " monitor-detail--error" : ""}`;
   }
 
+  function renderAuctionControls(auctions) {
+    auctionList.replaceChildren();
+    auctionControls.hidden = auctions.length === 0;
+
+    for (const auction of auctions) {
+      const row = document.createElement("label");
+      row.className = "auction-item";
+
+      const text = document.createElement("span");
+      text.className = "auction-item__text";
+
+      const title = document.createElement("span");
+      title.className = "auction-item__title";
+      title.textContent = auction.title || "Enchère WikiMasters";
+
+      const meta = document.createElement("span");
+      meta.className = "auction-item__meta";
+      meta.textContent = `${auction.secondsRemaining} s restantes · ${auction.enabled ? "alerte active" : "alerte coupée"}`;
+
+      const toggle = document.createElement("input");
+      toggle.type = "checkbox";
+      toggle.role = "switch";
+      toggle.className = "auction-toggle";
+      toggle.checked = auction.enabled !== false;
+      toggle.dataset.auctionId = auction.id;
+      toggle.setAttribute("aria-label", `Alerte pour ${title.textContent}`);
+
+      text.append(title, meta);
+      row.append(text, toggle);
+      auctionList.append(row);
+    }
+  }
+
+  async function setAuctionEnabled(auctionId, enabled) {
+    const stored = await chrome.storage.local.get({ disabledAuctionIds: [] });
+    const disabled = new Set(
+      Array.isArray(stored.disabledAuctionIds) ? stored.disabledAuctionIds : []
+    );
+
+    if (enabled) {
+      disabled.delete(auctionId);
+    } else {
+      disabled.add(auctionId);
+    }
+
+    await chrome.storage.local.set({
+      disabledAuctionIds: Array.from(disabled).slice(-500)
+    });
+  }
+
   async function refreshMonitorStatus() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.url?.startsWith("https://www.wiki-masters.com/")) {
+      renderAuctionControls([]);
       setMonitorDetail("Ouvrez un onglet WikiMasters pour voir les enchères détectées.");
       return;
     }
@@ -45,20 +98,33 @@
         throw new Error("Réponse de surveillance absente");
       }
 
+      const stored = await chrome.storage.local.get({ disabledAuctionIds: [] });
+      const disabledIds = new Set(
+        Array.isArray(stored.disabledAuctionIds) ? stored.disabledAuctionIds : []
+      );
+      const auctions = response.auctions.map((auction) => ({
+        ...auction,
+        enabled: !disabledIds.has(auction.id)
+      }));
+
       if (!response.scannedAt) {
+        renderAuctionControls([]);
         setMonitorDetail("Analyse de la page en cours…");
-      } else if (response.auctions.length === 0) {
+      } else if (auctions.length === 0) {
+        renderAuctionControls([]);
         setMonitorDetail("Aucune enchère active détectée sur cet onglet.", true);
       } else {
-        const closest = response.auctions.reduce((best, auction) =>
+        renderAuctionControls(auctions);
+        const closest = auctions.reduce((best, auction) =>
           auction.secondsRemaining < best.secondsRemaining ? auction : best
         );
         setMonitorDetail(
-          `${response.auctions.length} enchère${response.auctions.length > 1 ? "s" : ""} détectée${response.auctions.length > 1 ? "s" : ""} · ${closest.secondsRemaining} s restantes`
+          `${auctions.length} enchère${auctions.length > 1 ? "s" : ""} détectée${auctions.length > 1 ? "s" : ""} · ${closest.secondsRemaining} s restantes`
         );
       }
     } catch (error) {
       console.debug("État du content script indisponible", error);
+      renderAuctionControls([]);
       setMonitorDetail("Rechargez cet onglet WikiMasters après avoir actualisé l’extension.", true);
     }
   }
@@ -111,6 +177,23 @@
       }
     });
   }
+
+  auctionList.addEventListener("change", async (event) => {
+    const toggle = event.target.closest(".auction-toggle");
+    if (!toggle) return;
+
+    toggle.disabled = true;
+    try {
+      await setAuctionEnabled(toggle.dataset.auctionId, toggle.checked);
+      await refreshMonitorStatus();
+    } catch (error) {
+      console.error("Impossible de modifier l’alerte de cette enchère", error);
+      toggle.checked = !toggle.checked;
+      setMonitorDetail("Le réglage de cette enchère n’a pas pu être enregistré.", true);
+    } finally {
+      toggle.disabled = false;
+    }
+  });
 
   testButton.addEventListener("click", async () => {
     testButton.disabled = true;

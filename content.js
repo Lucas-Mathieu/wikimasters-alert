@@ -3,7 +3,8 @@
 
   const DEFAULT_SETTINGS = Object.freeze({
     enabled: true,
-    thresholdSeconds: 30
+    thresholdSeconds: 30,
+    disabledAuctionIds: []
   });
 
   const FALLBACK_SCAN_INTERVAL_MS = 1000;
@@ -423,16 +424,27 @@
 
     const now = Date.now();
     const activeAuctions = findActiveAuctions();
+    const disabledAuctionIds = new Set(
+      Array.isArray(settings.disabledAuctionIds)
+        ? settings.disabledAuctionIds.filter((id) => typeof id === "string")
+        : []
+    );
     lastScanResult = {
       scannedAt: now,
       auctions: activeAuctions.map(({ id, title, secondsRemaining }) => ({
         id,
         title,
-        secondsRemaining
+        secondsRemaining,
+        enabled: !disabledAuctionIds.has(id)
       }))
     };
 
     for (const auction of activeAuctions) {
+      if (disabledAuctionIds.has(auction.id)) {
+        auctionCycles.delete(auction.id);
+        continue;
+      }
+
       const cycle = cycleForAuction(auction, now);
       if (!cycle.alerted && auction.secondsRemaining <= settings.thresholdSeconds) {
         sendThresholdAlert(auction, cycle);

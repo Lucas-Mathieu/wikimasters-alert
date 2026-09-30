@@ -5,6 +5,7 @@
   const alertId = params.get("alert") || "";
   const titleElement = document.getElementById("auctionTitle");
   const durationElement = document.getElementById("duration");
+  const remainingLabel = document.getElementById("remainingLabel");
   const eyebrowElement = document.getElementById("eyebrow");
   const errorElement = document.getElementById("error");
   const openButton = document.getElementById("openAuction");
@@ -26,6 +27,7 @@
 
     titleElement.textContent = alert.title || "Enchère WikiMasters";
     durationElement.textContent = alert.duration || `${alert.secondsRemaining} secondes`;
+    remainingLabel.textContent = alert.secondsRemaining === 1 ? "restante" : "restantes";
     eyebrowElement.textContent = alert.isTest
       ? "Test de l’alerte Chrome"
       : "Enchère bientôt terminée";
