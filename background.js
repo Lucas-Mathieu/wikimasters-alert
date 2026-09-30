@@ -11,7 +11,11 @@ const DEFAULT_SETTINGS = Object.freeze({
   auctionAlertOverrides: {}
 });
 
-const SITE_ORIGIN = "https://www.wiki-masters.com";
+const SITE_ORIGINS = new Set([
+  "https://www.wiki-masters.com",
+  "https://wiki-masters.com"
+]);
+const PRIMARY_SITE_ORIGIN = "https://www.wiki-masters.com";
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const ALERT_HISTORY_KEY = "alertedAuctionCycles";
 const CUSTOM_ALERTS_KEY = "customAlertWindows";
@@ -129,7 +133,7 @@ async function getSettings() {
 
 function isWikiMastersTab(tab) {
   try {
-    return new URL(tab?.url).origin === SITE_ORIGIN;
+    return SITE_ORIGINS.has(new URL(tab?.url).origin);
   } catch {
     return false;
   }
@@ -209,7 +213,7 @@ async function handleTestAlert() {
     cycleId: `test:${Date.now()}`,
     title: "Alerte de test WikiMasters",
     secondsRemaining: settings.thresholdSeconds,
-    pageUrl: tab?.url || SITE_ORIGIN
+    pageUrl: tab?.url || PRIMARY_SITE_ORIGIN
   };
 
   const channels = await dispatchAlert({ auction, settings, tab, isTest: true });
@@ -422,7 +426,9 @@ async function findWikiMastersTab() {
     return activeWikiMastersTab;
   }
 
-  const siteTabs = await chrome.tabs.query({ url: `${SITE_ORIGIN}/*` });
+  const siteTabs = await chrome.tabs.query({
+    url: Array.from(SITE_ORIGINS, (origin) => `${origin}/*`)
+  });
   return siteTabs.find((tab) => tab.active) || siteTabs[0] || null;
 }
 

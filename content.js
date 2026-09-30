@@ -90,7 +90,7 @@
     }
 
     value = value
-      .replace(/^(?:(?:temps|dur[eé]e)\s+restant(?:e)?|reste|dans|fin\s+dans|se\s+termine\s+dans|expire(?:ra|nt)?\s+dans|countdown)\s*[:\-]?\s*/i, "")
+      .replace(/^(?:(?:temps|dur[eé]e)\s+restant(?:e)?(?:\s+dans)?|reste|dans|fin\s+dans|se\s+termine\s+dans|expire(?:ra|nt)?\s+dans|countdown)\s*[:\-]?\s*/i, "")
       .replace(/\s*(?:restant(?:e)?s?)\s*$/i, "")
       .replace(/[.]$/, "")
       .trim();
@@ -120,7 +120,7 @@
   }
 
   function hasExplicitTimerText(value) {
-    return /\b(?:dans|restant|termine|expire)\b/i.test(normalizeText(value));
+    return /(?:dans(?=\s*\d|\b)|\b(?:restant|termine|expire)\b)/i.test(normalizeText(value));
   }
 
   function selectorList(selectors) {
@@ -187,12 +187,37 @@
     return null;
   }
 
-  function addCandidatesFrom(root, candidates, limit = 250) {
+  function readEmbeddedTimerValue(element) {
+    const text = normalizeText(element.textContent);
+    if (!text || text.length > 320) {
+      return null;
+    }
+
+    const signal = text.match(/(?:temps\s+restant(?:e)?|reste|fin\s+dans|se\s+termine\s+dans|expire(?:ra|nt)?\s+dans|dans)\s*[:\-]?\s*(.*)$/i);
+    if (!signal) {
+      return null;
+    }
+
+    const remainder = signal[1].replace(/^dans\s*/i, "");
+    const colonDuration = remainder.match(/^(\d{1,3}\s*:\s*[0-5]?\d(?:\s*:\s*[0-5]?\d)?)/);
+    const unitsDuration = remainder.match(
+      /^((?:(?:\d+)\s*(?:j|jour(?:s)?|h|heure(?:s)?|m|min|minute(?:s)?|s|sec|seconde(?:s)?)\s*){1,4})/i
+    );
+    const durationText = colonDuration?.[1] || unitsDuration?.[1];
+    const seconds = parseCountdown(durationText);
+
+    return seconds === null ? null : { seconds, sourceText: signal[0] };
+  }
+
+  function addCandidatesFrom(root, candidates, limit = 250, allowEmbedded = false) {
     if (!(root instanceof Element || root instanceof Document)) {
       return;
     }
 
-    if (root instanceof Element && readTimerValue(root)) {
+    if (
+      root instanceof Element &&
+      (readTimerValue(root) || (allowEmbedded && readEmbeddedTimerValue(root)))
+    ) {
       candidates.add(root);
     }
 
@@ -201,7 +226,10 @@
     );
 
     for (let index = 0; index < elements.length && index < limit; index += 1) {
-      if (readTimerValue(elements[index])) {
+      if (
+        readTimerValue(elements[index]) ||
+        (allowEmbedded && readEmbeddedTimerValue(elements[index]))
+      ) {
         candidates.add(elements[index]);
       }
     }
@@ -422,13 +450,13 @@
 
     // Repli générique borné pour les interfaces sans attribut ou classe sémantique.
     if (candidates.size < 20 || detailPage) {
-      addCandidatesFrom(document, candidates, detailPage ? 4000 : 1600);
+      addCandidatesFrom(document, candidates, detailPage ? 4000 : 1600, detailPage);
     }
 
     const auctionsById = new Map();
 
     for (const element of candidates) {
-      const timer = readTimerValue(element);
+      const timer = readTimerValue(element) || (detailPage ? readEmbeddedTimerValue(element) : null);
       if (!timer || timer.seconds <= 0) {
         continue;
       }
@@ -506,92 +534,44 @@
       host.id = PAGE_TOGGLE_HOST_ID;
       host.setAttribute("data-wikimasters-alert-ui", "true");
       const shadow = host.attachShadow({ mode: "open" });
-      shadow.innerHTML = `
-        <style>
-          :host {
-            position: fixed;
-            right: 22px;
-            bottom: 22px;
-            z-index: 2147483647;
-            color-scheme: dark;
-            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          }
-          .card {
-            display: flex;
-            width: 286px;
-            align-items: center;
-            gap: 12px;
-            padding: 13px 14px;
-            border: 1px solid rgba(255, 255, 255, 0.13);
-            border-radius: 15px;
-            color: #f7f8fc;
-            background: rgba(23, 27, 38, 0.96);
-            box-shadow: 0 16px 42px rgba(0, 0, 0, 0.42);
-            backdrop-filter: blur(12px);
-          }
-          .mark {
-            display: grid;
-            flex: 0 0 auto;
-            width: 36px;
-            height: 36px;
-            place-items: center;
-            border-radius: 11px;
-            color: #fff;
-            background: linear-gradient(145deg, #5665f5, #754bd9);
-            font-size: 18px;
-            font-weight: 900;
-          }
-          .copy { min-width: 0; flex: 1; }
-          .label, .title { display: block; }
-          .label { font-size: 12px; font-weight: 800; }
-          .title {
-            margin-top: 3px;
-            overflow: hidden;
-            color: #aeb5c5;
-            font-size: 10px;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-          }
-          input {
-            position: relative;
-            flex: 0 0 auto;
-            width: 40px;
-            height: 23px;
-            margin: 0;
-            border: 0;
-            border-radius: 999px;
-            appearance: none;
-            background: #555d70;
-            cursor: pointer;
-            transition: background 150ms ease;
-          }
-          input::after {
-            position: absolute;
-            top: 3px;
-            left: 3px;
-            width: 17px;
-            height: 17px;
-            border-radius: 50%;
-            background: #fff;
-            content: "";
-            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
-            transition: transform 150ms ease;
-          }
-          input:checked { background: #5e67ed; }
-          input:checked::after { transform: translateX(17px); }
-          input:focus-visible { outline: 3px solid rgba(113, 122, 255, 0.38); outline-offset: 3px; }
-        </style>
-        <label class="card">
-          <span class="mark" aria-hidden="true">W</span>
-          <span class="copy">
-            <span class="label">Alerte pour cette enchère</span>
-            <span class="title"></span>
-          </span>
-          <input type="checkbox" role="switch" aria-label="Activer l’alerte pour cette enchère">
-        </label>
+      const style = document.createElement("style");
+      style.textContent = `
+        :host { position: fixed; right: 22px; bottom: 22px; z-index: 2147483647; color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        .card { display: flex; width: 286px; align-items: center; gap: 12px; padding: 13px 14px; border: 1px solid rgba(255, 255, 255, 0.13); border-radius: 15px; color: #f7f8fc; background: rgba(23, 27, 38, 0.96); box-shadow: 0 16px 42px rgba(0, 0, 0, 0.42); backdrop-filter: blur(12px); }
+        .mark { display: grid; flex: 0 0 auto; width: 36px; height: 36px; place-items: center; border-radius: 11px; color: #fff; background: linear-gradient(145deg, #5665f5, #754bd9); font-size: 18px; font-weight: 900; }
+        .copy { min-width: 0; flex: 1; }
+        .label, .title { display: block; }
+        .label { font-size: 12px; font-weight: 800; }
+        .title { margin-top: 3px; overflow: hidden; color: #aeb5c5; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+        input { position: relative; flex: 0 0 auto; width: 40px; height: 23px; margin: 0; border: 0; border-radius: 999px; appearance: none; background: #555d70; cursor: pointer; transition: background 150ms ease; }
+        input::after { position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: #fff; content: ""; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35); transition: transform 150ms ease; }
+        input:checked { background: #5e67ed; }
+        input:checked::after { transform: translateX(17px); }
+        input:focus-visible { outline: 3px solid rgba(113, 122, 255, 0.38); outline-offset: 3px; }
       `;
 
-      const toggle = shadow.querySelector("input");
+      const card = document.createElement("label");
+      card.className = "card";
+      const mark = document.createElement("span");
+      mark.className = "mark";
+      mark.setAttribute("aria-hidden", "true");
+      mark.textContent = "W";
+      const copy = document.createElement("span");
+      copy.className = "copy";
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = "Alerte pour cette enchère";
+      const title = document.createElement("span");
+      title.className = "title";
+      const toggle = document.createElement("input");
+      toggle.type = "checkbox";
+      toggle.setAttribute("role", "switch");
+      toggle.setAttribute("aria-label", "Activer l’alerte pour cette enchère");
+
+      copy.append(label, title);
+      card.append(mark, copy, toggle);
+      shadow.append(style, card);
+
       toggle.addEventListener("change", async () => {
         toggle.disabled = true;
         try {
@@ -666,7 +646,6 @@
 
     const now = Date.now();
     const activeAuctions = findActiveAuctions();
-    updatePageAuctionToggle(activeAuctions);
     lastScanResult = {
       scannedAt: now,
       auctions: activeAuctions.map(({ id, title, secondsRemaining }) => ({
@@ -676,6 +655,12 @@
         enabled: isAuctionAlertEnabled(id)
       }))
     };
+
+    try {
+      updatePageAuctionToggle(activeAuctions);
+    } catch (error) {
+      console.error("WikiMasters Alert: affichage du toggle impossible", error);
+    }
 
     for (const auction of activeAuctions) {
       if (!isAuctionAlertEnabled(auction.id)) {
@@ -759,7 +744,8 @@
       hashString,
       hasExplicitTimerText,
       isAuctionDetailPage,
-      parseCountdown
+      parseCountdown,
+      readEmbeddedTimerValue
     });
   } else {
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {

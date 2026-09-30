@@ -1,6 +1,6 @@
 # WikiMasters Auction Alert
 
-Extension Chrome Manifest V3 qui surveille passivement les comptes à rebours des enchères ouvertes sur `www.wiki-masters.com` et prévient l’utilisateur avant leur fin.
+Extension Chrome Manifest V3 qui surveille passivement les comptes à rebours des enchères ouvertes sur `wiki-masters.com` et `www.wiki-masters.com`, puis prévient l’utilisateur avant leur fin.
 
 L’extension ne clique sur aucun élément, ne place aucune enchère et n’intercepte aucun trafic réseau. Elle lit uniquement le DOM déjà affiché dans les onglets WikiMasters.
 

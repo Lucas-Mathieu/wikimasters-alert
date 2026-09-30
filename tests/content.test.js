@@ -29,6 +29,15 @@ assert.equal(detector.isAuctionDetailPage(detailPageText), true);
 assert.equal(detector.isAuctionDetailPage("Marché Toutes les cartes Profil"), false);
 assert.equal(detector.hasExplicitTimerText("dans 19m 49s"), true);
 assert.equal(detector.hasExplicitTimerText("09:35"), false);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(detector.readEmbeddedTimerValue({ textContent: "Mise 60 · dans 1m 11s" }))),
+  { seconds: 71, sourceText: "dans 1m 11s" }
+);
+assert.equal(
+  detector.readEmbeddedTimerValue({ textContent: "Mise60dans1m11s" }).seconds,
+  71
+);
+assert.equal(detector.readEmbeddedTimerValue({ textContent: "30 sept., 09:35" }), null);
 
 const validCases = new Map([
   ["00:32", 32],
@@ -41,6 +50,7 @@ const validCases = new Map([
   ["se termine dans 2 min 05 sec", 125],
   ["expire dans 40 secondes", 40],
   ["dans 19m 49s", 1189],
+  ["Temps restant dans 1m 11s", 71],
   ["00 h : 00 min : 40 s", 40],
   ["1 h 2 min 3 sec", 3723],
   ["1 jour 2 h", 93600]

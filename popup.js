@@ -35,6 +35,15 @@
     monitorDetail.className = `monitor-detail${isError ? " monitor-detail--error" : ""}`;
   }
 
+  function isWikiMastersUrl(url) {
+    try {
+      const origin = new URL(url).origin;
+      return origin === "https://www.wiki-masters.com" || origin === "https://wiki-masters.com";
+    } catch {
+      return false;
+    }
+  }
+
   function renderAuctionControls(auctions) {
     auctionList.replaceChildren();
     auctionControls.hidden = auctions.length === 0;
@@ -97,7 +106,7 @@
 
   async function refreshMonitorStatus() {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.url?.startsWith("https://www.wiki-masters.com/")) {
+    if (!isWikiMastersUrl(tab?.url)) {
       renderAuctionControls([]);
       setMonitorDetail("Ouvrez un onglet WikiMasters pour voir les enchères détectées.");
       return;
