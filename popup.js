@@ -14,6 +14,7 @@
     SETTING_IDS.map((id) => [id, document.getElementById(id)])
   );
   const statusElement = document.getElementById("status");
+  const monitorDetail = document.getElementById("monitorDetail");
   const testButton = document.getElementById("testAlert");
 
   function normalizeThreshold(value) {
@@ -24,6 +25,42 @@
   function updateStatus(enabled, message = "") {
     statusElement.className = `status${enabled ? " status--active" : ""}`;
     statusElement.textContent = message || (enabled ? "Surveillance active" : "Désactivée");
+  }
+
+  function setMonitorDetail(message, isError = false) {
+    monitorDetail.textContent = message;
+    monitorDetail.className = `monitor-detail${isError ? " monitor-detail--error" : ""}`;
+  }
+
+  async function refreshMonitorStatus() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.url?.startsWith("https://www.wiki-masters.com/")) {
+      setMonitorDetail("Ouvrez un onglet WikiMasters pour voir les enchères détectées.");
+      return;
+    }
+
+    try {
+      const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_MONITOR_STATUS" });
+      if (!response?.ok) {
+        throw new Error("Réponse de surveillance absente");
+      }
+
+      if (!response.scannedAt) {
+        setMonitorDetail("Analyse de la page en cours…");
+      } else if (response.auctions.length === 0) {
+        setMonitorDetail("Aucune enchère active détectée sur cet onglet.", true);
+      } else {
+        const closest = response.auctions.reduce((best, auction) =>
+          auction.secondsRemaining < best.secondsRemaining ? auction : best
+        );
+        setMonitorDetail(
+          `${response.auctions.length} enchère${response.auctions.length > 1 ? "s" : ""} détectée${response.auctions.length > 1 ? "s" : ""} · ${closest.secondsRemaining} s restantes`
+        );
+      }
+    } catch (error) {
+      console.debug("État du content script indisponible", error);
+      setMonitorDetail("Rechargez cet onglet WikiMasters après avoir actualisé l’extension.", true);
+    }
   }
 
   async function loadSettings() {
@@ -42,6 +79,7 @@
 
     updateStatus(controls.enabled.checked);
     testButton.disabled = false;
+    await refreshMonitorStatus();
   }
 
   async function saveControl(control) {
@@ -58,6 +96,8 @@
     if (control.id === "enabled") {
       updateStatus(value);
     }
+
+    await refreshMonitorStatus();
   }
 
   for (const control of Object.values(controls)) {
@@ -81,8 +121,23 @@
         throw new Error(response?.error || "Le service d’alerte ne répond pas");
       }
 
-      updateStatus(controls.enabled.checked, "Alerte de test envoyée");
-      window.setTimeout(() => updateStatus(controls.enabled.checked), 1800);
+      const notification = response.channels?.notification;
+      if (notification?.requested && !notification.ok) {
+        updateStatus(false, "Notification refusée");
+        statusElement.className = "status status--error";
+        setMonitorDetail(notification.error || "Chrome a refusé la notification.", true);
+      } else if (notification?.ok) {
+        updateStatus(controls.enabled.checked, "Notification créée par Chrome");
+        setMonitorDetail("Si rien ne s’affiche, vérifiez les notifications Chrome dans Windows.");
+      } else {
+        updateStatus(controls.enabled.checked, "Test exécuté sans notification");
+        setMonitorDetail("Activez « Afficher une notification » pour tester ce canal.");
+      }
+
+      window.setTimeout(async () => {
+        updateStatus(controls.enabled.checked);
+        await refreshMonitorStatus();
+      }, 3500);
     } catch (error) {
       console.error("Échec du test d’alerte", error);
       statusElement.className = "status status--error";
@@ -97,4 +152,8 @@
     statusElement.className = "status status--error";
     statusElement.textContent = "Réglages indisponibles";
   });
+
+  window.setInterval(() => {
+    refreshMonitorStatus().catch(() => {});
+  }, 1500);
 })();

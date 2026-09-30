@@ -231,3 +231,20 @@ input[type="number"] {
 .status--error::before {
   background: #d45353;
 }
+
+.monitor-detail {
+  min-height: 30px;
+  margin: 6px 4px 0;
+  color: #747d93;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.monitor-detail:empty {
+  display: none;
+}
+
+.monitor-detail--error {
+  color: #a54444;
+}

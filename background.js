@@ -143,14 +143,14 @@ async function handleAuctionAlert(rawAuction, sender) {
     return { accepted: false, reason: "duplicate" };
   }
 
-  await dispatchAlert({
+  const channels = await dispatchAlert({
     auction,
     settings,
     tab: sender.tab,
     isTest: false
   });
 
-  return { accepted: true };
+  return { accepted: true, channels };
 }
 
 async function handleTestAlert() {
@@ -164,31 +164,44 @@ async function handleTestAlert() {
     pageUrl: tab?.url || SITE_ORIGIN
   };
 
-  await dispatchAlert({ auction, settings, tab, isTest: true });
-  return { accepted: true };
+  const channels = await dispatchAlert({ auction, settings, tab, isTest: true });
+  return { accepted: true, channels };
 }
 
 async function dispatchAlert({ auction, settings, tab, isTest }) {
   const operations = [];
 
   if (settings.showNotification) {
-    operations.push(showNotification(auction, tab, isTest));
+    operations.push(["notification", () => showNotification(auction, tab, isTest)]);
   }
 
   if (settings.playSound) {
-    operations.push(playAlertSound());
+    operations.push(["sound", () => playAlertSound()]);
   }
 
   if (settings.bringToFront && tab) {
-    operations.push(focusTab(tab.id, tab.windowId));
+    operations.push(["focus", () => focusTab(tab.id, tab.windowId)]);
   }
 
-  const results = await Promise.allSettled(operations);
-  for (const result of results) {
-    if (result.status === "rejected") {
-      console.error("WikiMasters Alert: canal d’alerte en échec", result.reason);
+  const entries = await Promise.all(operations.map(async ([name, operation]) => {
+    try {
+      const details = await operation();
+      return [name, { requested: true, ok: true, details: details || null }];
+    } catch (error) {
+      console.error(`WikiMasters Alert: canal ${name} en échec`, error);
+      return [name, {
+        requested: true,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      }];
     }
-  }
+  }));
+
+  const channels = Object.fromEntries(entries);
+  channels.notification ??= { requested: settings.showNotification, ok: null };
+  channels.sound ??= { requested: settings.playSound, ok: null };
+  channels.focus ??= { requested: settings.bringToFront, ok: null };
+  return channels;
 }
 
 async function claimAuctionCycle(cycleId) {
@@ -238,6 +251,11 @@ function formatDuration(totalSeconds) {
 }
 
 async function showNotification(auction, tab, isTest) {
+  const permissionLevel = await chrome.notifications.getPermissionLevel();
+  if (permissionLevel !== "granted") {
+    throw new Error(`Notifications Chrome non autorisées (${permissionLevel})`);
+  }
+
   const notificationId = `wikimasters-${isTest ? "test" : "auction"}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const title = isTest ? "Test de l’alerte WikiMasters" : "Une enchère se termine bientôt";
   const message = `${formatDuration(auction.secondsRemaining)} restante${auction.secondsRemaining > 1 ? "s" : ""}`;
@@ -253,12 +271,15 @@ async function showNotification(auction, tab, isTest) {
       title,
       message,
       contextMessage: auction.title,
-      priority: 2
+      priority: 2,
+      requireInteraction: true
     });
   } catch (error) {
     await removeNotificationTarget(notificationId);
     throw error;
   }
+
+  return { notificationId, permissionLevel };
 }
 
 async function saveNotificationTarget(notificationId, tab) {

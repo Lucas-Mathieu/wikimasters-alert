@@ -42,7 +42,11 @@ wikimasters-alert/
 
 ## Vérification rapide
 
-Exécuter `node tests/content.test.js` depuis ce dossier pour valider le parsing des formats de compte à rebours. Ce test ne requiert aucune installation ni dépendance npm.
+Exécuter `node tests/content.test.js` puis `node tests/background.test.js` depuis ce dossier pour valider le parsing des comptes à rebours et le canal de notification. Ces tests ne requièrent aucune installation ni dépendance npm.
+
+La popup affiche aussi le nombre d’enchères reconnues dans l’onglet WikiMasters actif. Après une mise à jour de l’extension, il faut recharger cet onglet pour injecter la nouvelle version du détecteur.
+
+Si le test indique **Notification créée par Chrome** sans rien afficher à l’écran, l’API a accepté la notification mais Windows ou Chrome la masque. Vérifier alors **Paramètres Windows → Système → Notifications → Google Chrome**, ainsi que le mode *Ne pas déranger*. Si Chrome refuse directement le canal, l’erreur exacte apparaît dans la popup.
 
 ## Ajuster la détection du site
 
