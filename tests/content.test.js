@@ -30,6 +30,10 @@ assert.equal(detector.isAuctionDetailPage("Marché Toutes les cartes Profil"), f
 assert.equal(detector.hasExplicitTimerText("dans 19m 49s"), true);
 assert.equal(detector.hasExplicitTimerText("09:35"), false);
 assert.equal(detector.indicatesClosedAuction("Se termine dans 22m 12s"), false);
+assert.equal(
+  detector.indicatesClosedAuction("Mise actuelle150Temps restantSe termine dans 22m 12s"),
+  false
+);
 assert.equal(detector.indicatesClosedAuction("Expire dans 49s"), false);
 assert.equal(detector.indicatesClosedAuction("Enchère terminée"), true);
 assert.deepEqual(

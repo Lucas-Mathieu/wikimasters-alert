@@ -126,7 +126,7 @@
 
   function indicatesClosedAuction(value) {
     const textWithoutActiveCountdown = normalizeText(value).replace(
-      /\b(?:se\s+termine|expire(?:ra)?)\s+dans\b/gi,
+      /(?:se\s+termine|expire(?:ra)?)\s+dans\b/gi,
       ""
     );
     return CLOSED_CONTEXT_PATTERN.test(textWithoutActiveCountdown);
