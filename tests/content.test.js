@@ -27,6 +27,8 @@ const validCases = new Map([
   ["1m 20s", 80],
   ["Temps restant : 01:05", 65],
   ["se termine dans 2 min 05 sec", 125],
+  ["expire dans 40 secondes", 40],
+  ["00 h : 00 min : 40 s", 40],
   ["1 h 2 min 3 sec", 3723],
   ["1 jour 2 h", 93600]
 ]);

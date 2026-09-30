@@ -22,10 +22,16 @@
   const SELECTORS = Object.freeze({
     auctionContainers: [
       "[data-auction-id]",
+      "[data-listing-id]",
+      "[data-end-time]",
+      "[data-expires-at]",
       "[data-testid*='auction' i]",
       "[data-testid*='enchere' i]",
+      "a[href*='auction' i]",
+      "a[href*='enchere' i]",
       "[class*='auction' i]",
-      "[class*='enchere' i]"
+      "[class*='enchere' i]",
+      "[class*='listing' i]"
     ],
     timers: [
       "[data-countdown]",
@@ -52,8 +58,8 @@
   });
   // ===== END WIKIMASTERS SELECTORS =====
 
-  const AUCTION_CONTEXT_PATTERN = /\b(?:ench[eè]re|auction|offre|miser|mise actuelle|bid)\b/i;
-  const ACTIVE_CONTEXT_PATTERN = /\b(?:en cours|ouverte?|temps restant|se termine|fin dans|offres?)\b/i;
+  const AUCTION_CONTEXT_PATTERN = /\b(?:ench[eè]res?|ench[eé]rir|auction|offres?|miser|mises?|prix actuel|bids?|vente)\b/i;
+  const ACTIVE_CONTEXT_PATTERN = /\b(?:en cours|ouverte?|temps restant|reste|se termine|expire|fin dans|offres?)\b/i;
   const CLOSED_CONTEXT_PATTERN = /\b(?:termin[eé]e?|cl[oô]tur[eé]e?|ferm[eé]e?|expir[eé]e?|vendue?|annul[eé]e?)\b/i;
 
   function normalizeText(value) {
@@ -71,7 +77,7 @@
     }
 
     value = value
-      .replace(/^(?:(?:temps|dur[eé]e)\s+restant(?:e)?|reste|fin\s+dans|se\s+termine\s+dans|countdown)\s*[:\-]?\s*/i, "")
+      .replace(/^(?:(?:temps|dur[eé]e)\s+restant(?:e)?|reste|fin\s+dans|se\s+termine\s+dans|expire(?:ra|nt)?\s+dans|countdown)\s*[:\-]?\s*/i, "")
       .replace(/\s*(?:restant(?:e)?s?)\s*$/i, "")
       .replace(/[.]$/, "")
       .trim();
@@ -87,7 +93,8 @@
         : first * 3600 + second * 60 + third;
     }
 
-    const unitsMatch = value.match(
+    const unitValue = value.replace(/\s*[:·]\s*/g, " ");
+    const unitsMatch = unitValue.match(
       /^(?:(\d+)\s*(?:j|jour(?:s)?)\s*)?(?:(\d+)\s*(?:h|heure(?:s)?)\s*)?(?:(\d+)\s*(?:m|min|minute(?:s)?)\s*)?(?:(\d+)\s*(?:s|sec|seconde(?:s)?)\s*)?$/i
     );
 
@@ -173,7 +180,7 @@
     }
 
     const elements = root.querySelectorAll(
-      `${selectorList(SELECTORS.timers)}, time, span, p, [aria-label]`
+      `${selectorList(SELECTORS.timers)}, time, span, p, div, li, [aria-label]`
     );
 
     for (let index = 0; index < elements.length && index < limit; index += 1) {
@@ -416,6 +423,14 @@
 
     const now = Date.now();
     const activeAuctions = findActiveAuctions();
+    lastScanResult = {
+      scannedAt: now,
+      auctions: activeAuctions.map(({ id, title, secondsRemaining }) => ({
+        id,
+        title,
+        secondsRemaining
+      }))
+    };
 
     for (const auction of activeAuctions) {
       const cycle = cycleForAuction(auction, now);
@@ -483,9 +498,28 @@
     scanPage();
   }
 
+  let lastScanResult = {
+    scannedAt: null,
+    auctions: []
+  };
+
   if (typeof globalThis.__WIKIMASTERS_TEST_HOOK__ === "function") {
     globalThis.__WIKIMASTERS_TEST_HOOK__({ hashString, parseCountdown });
   } else {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (message?.type !== "GET_MONITOR_STATUS") {
+        return false;
+      }
+
+      sendResponse({
+        ok: true,
+        enabled: settings.enabled,
+        thresholdSeconds: settings.thresholdSeconds,
+        ...lastScanResult
+      });
+      return false;
+    });
+
     initialize().catch((error) => {
       console.error("WikiMasters Alert: initialisation impossible", error);
     });
