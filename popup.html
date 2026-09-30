@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WikiMasters Auction Alert</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="popup-shell">
+      <header class="popup-header">
+        <div class="brand-mark" aria-hidden="true">W</div>
+        <div>
+          <h1>Alertes d’enchères</h1>
+          <p>WikiMasters</p>
+        </div>
+      </header>
+
+      <section class="settings-card" aria-label="Réglages">
+        <label class="setting-row setting-row--primary">
+          <span>
+            <strong>Surveillance</strong>
+            <small>Détecter les enchères ouvertes</small>
+          </span>
+          <input id="enabled" type="checkbox" role="switch">
+        </label>
+
+        <div class="divider"></div>
+
+        <label class="setting-row">
+          <span>Afficher une notification</span>
+          <input id="showNotification" type="checkbox" role="switch">
+        </label>
+
+        <label class="setting-row">
+          <span>Jouer un son</span>
+          <input id="playSound" type="checkbox" role="switch">
+        </label>
+
+        <label class="setting-row">
+          <span>Mettre l’onglet au premier plan</span>
+          <input id="bringToFront" type="checkbox" role="switch">
+        </label>
+
+        <label class="threshold-row" for="thresholdSeconds">
+          <span>Alerter à</span>
+          <span class="number-field">
+            <input id="thresholdSeconds" type="number" min="1" max="86400" step="1" inputmode="numeric">
+            <span>secondes avant la fin</span>
+          </span>
+        </label>
+      </section>
+
+      <button id="testAlert" class="test-button" type="button" disabled>
+        Tester l’alerte
+      </button>
+
+      <p id="status" class="status" role="status" aria-live="polite">
+        Chargement…
+      </p>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
