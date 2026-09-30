@@ -18,6 +18,32 @@ Ouvrir la popup depuis la barre d’outils, choisir le délai souhaité et activ
 
 Le bouton **Tester l’alerte** utilise les réglages Notification, Son et Mise au premier plan, même lorsque la surveillance générale est désactivée.
 
+## Arborescence
+
+```text
+wikimasters-alert/
+├── manifest.json
+├── background.js
+├── content.js
+├── popup.html
+├── popup.js
+├── popup.css
+├── offscreen.html
+├── offscreen.js
+├── icons/
+│   ├── icon16.png
+│   ├── icon48.png
+│   └── icon128.png
+├── sounds/
+│   └── alert.wav
+└── tests/
+    └── content.test.js
+```
+
+## Vérification rapide
+
+Exécuter `node tests/content.test.js` depuis ce dossier pour valider le parsing des formats de compte à rebours. Ce test ne requiert aucune installation ni dépendance npm.
+
 ## Ajuster la détection du site
 
 La détection générique couvre les compteurs `HH:MM:SS`, `MM:SS`, `32 s`, `32 sec` et `1 min 20 s`. Les sélecteurs spécifiques sont regroupés sous le commentaire `WIKIMASTERS SELECTORS` dans `content.js`.

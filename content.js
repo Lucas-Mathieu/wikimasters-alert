@@ -8,11 +8,13 @@
 
   const FALLBACK_SCAN_INTERVAL_MS = 1000;
   const MUTATION_DEBOUNCE_MS = 120;
+  const MIN_MUTATION_SCAN_INTERVAL_MS = 500;
   const FORGOTTEN_AUCTION_MS = 2 * 60 * 1000;
   const auctionCycles = new Map();
 
   let settings = { ...DEFAULT_SETTINGS };
   let scheduledScan = null;
+  let lastScanAt = 0;
 
   // ===== WIKIMASTERS SELECTORS =====
   // Ajouter en tête de ces listes les sélecteurs relevés dans le DOM authentifié.
@@ -127,11 +129,17 @@
   }
 
   function readTimerValue(element) {
-    const attributeValues = [
-      element.getAttribute("data-countdown"),
-      element.getAttribute("data-remaining-seconds"),
-      element.getAttribute("aria-label")
-    ];
+    const numericSeconds = normalizeText(element.getAttribute("data-remaining-seconds"));
+    if (/^\d+$/.test(numericSeconds)) {
+      return { seconds: Number(numericSeconds), sourceText: numericSeconds };
+    }
+
+    const numericCountdown = normalizeText(element.getAttribute("data-countdown"));
+    if (/^\d+$/.test(numericCountdown)) {
+      return { seconds: Number(numericCountdown), sourceText: numericCountdown };
+    }
+
+    const attributeValues = [numericCountdown, element.getAttribute("aria-label")];
 
     for (const value of attributeValues) {
       const seconds = parseCountdown(value);
@@ -247,6 +255,25 @@
     return (hash >>> 0).toString(36);
   }
 
+  function stableElementPath(element) {
+    const parts = [];
+    let current = element;
+
+    while (current && current !== document.body && parts.length < 7) {
+      let siblingIndex = 1;
+      let sibling = current.previousElementSibling;
+      while (sibling) {
+        if (sibling.tagName === current.tagName) siblingIndex += 1;
+        sibling = sibling.previousElementSibling;
+      }
+
+      parts.push(`${current.tagName.toLocaleLowerCase()}:nth-of-type(${siblingIndex})`);
+      current = current.parentElement;
+    }
+
+    return parts.reverse().join(">");
+  }
+
   function findAuctionId(container, timerElement, title) {
     const idAttributes = [
       "data-auction-id",
@@ -278,7 +305,8 @@
       location.pathname,
       title,
       container.id,
-      normalizeText(container.getAttribute("class")).slice(0, 180)
+      normalizeText(container.getAttribute("class")).slice(0, 180),
+      stableElementPath(container)
     ].join("|");
 
     return `generated:${hashString(structuralHint)}`;
@@ -381,6 +409,7 @@
 
   function scanPage() {
     scheduledScan = null;
+    lastScanAt = Date.now();
     if (!settings.enabled) {
       return;
     }
@@ -407,7 +436,12 @@
       return;
     }
 
-    scheduledScan = window.setTimeout(scanPage, MUTATION_DEBOUNCE_MS);
+    const elapsedSinceLastScan = Date.now() - lastScanAt;
+    const delay = Math.max(
+      MUTATION_DEBOUNCE_MS,
+      MIN_MUTATION_SCAN_INTERVAL_MS - elapsedSinceLastScan
+    );
+    scheduledScan = window.setTimeout(scanPage, delay);
   }
 
   async function initialize() {
@@ -449,7 +483,11 @@
     scanPage();
   }
 
-  initialize().catch((error) => {
-    console.error("WikiMasters Alert: initialisation impossible", error);
-  });
+  if (typeof globalThis.__WIKIMASTERS_TEST_HOOK__ === "function") {
+    globalThis.__WIKIMASTERS_TEST_HOOK__({ hashString, parseCountdown });
+  } else {
+    initialize().catch((error) => {
+      console.error("WikiMasters Alert: initialisation impossible", error);
+    });
+  }
 })();
