@@ -47,15 +47,18 @@
     auctionControls.hidden = auctions.length === 0;
 
     for (const auction of auctions) {
-      const row = document.createElement("label");
+      const row = document.createElement("div");
       row.className = "auction-item";
 
-      const text = document.createElement("span");
+      const main = document.createElement("div");
+      main.className = "auction-item__main";
+
+      const text = document.createElement("div");
       text.className = "auction-item__text";
 
       const title = document.createElement("span");
       title.className = "auction-item__title";
-      title.textContent = auction.title || "Enchère WikiMasters";
+      title.textContent = auction.title || "Enchère";
 
       const meta = document.createElement("span");
       meta.className = "auction-item__meta";
@@ -70,7 +73,27 @@
       toggle.setAttribute("aria-label", `Alerte pour ${title.textContent}`);
 
       text.append(title, meta);
-      row.append(text, toggle);
+      main.append(text, toggle);
+
+      const threshold = document.createElement("label");
+      threshold.className = "auction-item__threshold";
+      const thresholdLabel = document.createElement("span");
+      thresholdLabel.textContent = "Alerter à";
+      const thresholdInput = document.createElement("input");
+      thresholdInput.type = "number";
+      thresholdInput.min = "1";
+      thresholdInput.max = "86400";
+      thresholdInput.step = "1";
+      thresholdInput.inputMode = "numeric";
+      thresholdInput.className = "auction-threshold";
+      thresholdInput.dataset.auctionId = auction.id;
+      thresholdInput.value = normalizeThreshold(auction.thresholdSeconds);
+      thresholdInput.setAttribute("aria-label", `Délai d’alerte pour ${title.textContent}`);
+      const thresholdUnit = document.createElement("span");
+      thresholdUnit.textContent = "secondes avant la fin";
+      threshold.append(thresholdLabel, thresholdInput, thresholdUnit);
+
+      row.append(main, threshold);
       auctionList.append(row);
     }
   }
@@ -84,6 +107,18 @@
 
     await chrome.storage.local.set({
       auctionAlertOverrides: Object.fromEntries(Object.entries(overrides).slice(-500))
+    });
+  }
+
+  async function setAuctionThreshold(auctionId, thresholdSeconds) {
+    const stored = await chrome.storage.local.get({ auctionThresholdOverrides: {} });
+    const overrides = stored.auctionThresholdOverrides && typeof stored.auctionThresholdOverrides === "object"
+      ? { ...stored.auctionThresholdOverrides }
+      : {};
+    overrides[auctionId] = normalizeThreshold(thresholdSeconds);
+
+    await chrome.storage.local.set({
+      auctionThresholdOverrides: Object.fromEntries(Object.entries(overrides).slice(-500))
     });
   }
 
@@ -102,6 +137,15 @@
     return stored.auctionAlertsEnabledByDefault !== false;
   }
 
+  function effectiveAuctionThreshold(auctionId, stored) {
+    const overrides = stored.auctionThresholdOverrides && typeof stored.auctionThresholdOverrides === "object"
+      ? stored.auctionThresholdOverrides
+      : {};
+    return Object.prototype.hasOwnProperty.call(overrides, auctionId)
+      ? normalizeThreshold(overrides[auctionId])
+      : normalizeThreshold(stored.thresholdSeconds);
+  }
+
   async function refreshMonitorStatus() {
     try {
       const response = await chrome.runtime.sendMessage({ type: "GET_ALL_AUCTIONS" });
@@ -112,11 +156,14 @@
       const stored = await chrome.storage.local.get({
         disabledAuctionIds: [],
         auctionAlertsEnabledByDefault: true,
-        auctionAlertOverrides: {}
+        auctionAlertOverrides: {},
+        auctionThresholdOverrides: {},
+        thresholdSeconds: DEFAULT_SETTINGS.thresholdSeconds
       });
       const auctions = response.auctions.map((auction) => ({
         ...auction,
-        enabled: effectiveAuctionState(auction.id, stored)
+        enabled: effectiveAuctionState(auction.id, stored),
+        thresholdSeconds: effectiveAuctionThreshold(auction.id, stored)
       }));
 
       if (response.totalTabs === 0) {
@@ -195,18 +242,25 @@
 
   auctionList.addEventListener("change", async (event) => {
     const toggle = event.target.closest(".auction-toggle");
-    if (!toggle) return;
+    const threshold = event.target.closest(".auction-threshold");
+    if (!toggle && !threshold) return;
 
-    toggle.disabled = true;
+    const control = toggle || threshold;
+    control.disabled = true;
     try {
-      await setAuctionEnabled(toggle.dataset.auctionId, toggle.checked);
+      if (toggle) {
+        await setAuctionEnabled(toggle.dataset.auctionId, toggle.checked);
+      } else {
+        threshold.value = normalizeThreshold(threshold.value);
+        await setAuctionThreshold(threshold.dataset.auctionId, threshold.value);
+      }
       await refreshMonitorStatus();
     } catch (error) {
       console.error("Impossible de modifier l’alerte de cette enchère", error);
-      toggle.checked = !toggle.checked;
+      if (toggle) toggle.checked = !toggle.checked;
       setMonitorDetail("Le réglage de cette enchère n’a pas pu être enregistré.", true);
     } finally {
-      toggle.disabled = false;
+      control.disabled = false;
     }
   });
 

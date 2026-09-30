@@ -7,6 +7,7 @@ const vm = require("node:vm");
 
 let customWindowError = null;
 let createdWindow = null;
+let createdWindows = [];
 let popupOpenedForWindow = null;
 let queryTabs = null;
 let tabResponses = new Map();
@@ -19,7 +20,8 @@ let localSettings = {
   thresholdSeconds: 40,
   disabledAuctionIds: [],
   auctionAlertsEnabledByDefault: true,
-  auctionAlertOverrides: {}
+  auctionAlertOverrides: {},
+  auctionThresholdOverrides: {}
 };
 
 const listeners = {
@@ -68,6 +70,7 @@ const chrome = {
     create: async (options) => {
       if (customWindowError) throw customWindowError;
       createdWindow = { id: 81, options };
+      createdWindows.push(createdWindow);
       return { id: 81 };
     },
     update: async () => ({}),
@@ -122,6 +125,14 @@ vm.runInContext(source, context, { filename: "background.js" });
     auctionAlertsEnabledByDefault: false,
     auctionAlertOverrides: { "auction-new": true }
   }, "auction-new")`, context), true);
+  assert.equal(vm.runInContext(`auctionThresholdSeconds({
+    thresholdSeconds: 40,
+    auctionThresholdOverrides: { "auction-new": 12 }
+  }, "auction-new")`, context), 12);
+  assert.equal(vm.runInContext(`auctionThresholdSeconds({
+    thresholdSeconds: 40,
+    auctionThresholdOverrides: {}
+  }, "auction-new")`, context), 40);
 
   const manyTabs = Array.from({ length: 15 }, (_, index) => ({
     id: 100 + index,
@@ -159,7 +170,30 @@ vm.runInContext(source, context, { filename: "background.js" });
   assert.equal(settingsWindow.mode, "action-popup");
   assert.equal(popupOpenedForWindow, wikiTab.windowId);
 
-  console.log("Alertes, ouverture des réglages et agrégation de 15 onglets validées.");
+  customWindowError = null;
+  createdWindows = [];
+  localSettings.disabledAuctionIds = [];
+  const simultaneousAlerts = await Promise.all(manyTabs.map((tab, index) => vm.runInContext(
+    `handleAuctionAlert({
+      id: "page:/marketplace/auction-${index + 1}",
+      cycleId: "auction-${index + 1}:simultaneous",
+      title: "Enchère ${index + 1}",
+      secondsRemaining: 10
+    }, { tab: ${JSON.stringify(tab)} })`,
+    context
+  )));
+  assert.equal(simultaneousAlerts.filter((result) => result.accepted).length, 15);
+  assert.equal(createdWindows.length, 15);
+  assert.equal(
+    Object.keys(sessionStore.alertedAuctionCycles || {}).filter((id) => id.endsWith(":simultaneous")).length,
+    15
+  );
+  assert.equal(
+    Object.values(sessionStore.customAlertWindows || {}).filter((alert) => /^Enchère \d+$/.test(alert.title)).length,
+    15
+  );
+
+  console.log("Réglages par enchère, agrégation et 15 alertes simultanées validés.");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

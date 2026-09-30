@@ -6,7 +6,8 @@
     thresholdSeconds: 30,
     disabledAuctionIds: [],
     auctionAlertsEnabledByDefault: true,
-    auctionAlertOverrides: {}
+    auctionAlertOverrides: {},
+    auctionThresholdOverrides: {}
   });
 
   const FALLBACK_SCAN_INTERVAL_MS = 1000;
@@ -367,6 +368,7 @@
       title.length <= 160 &&
       element !== timerElement &&
       parseCountdown(title) === null &&
+      !/^(?:wikimasters|march[eé]|marketplace|alertes? d['’]ench[eè]res?)$/i.test(title) &&
       !/^(?:ench[eè]re|auction)(?:\s+en\s+cours)?$/i.test(title)
     );
   }
@@ -524,6 +526,23 @@
       : {};
   }
 
+  function normalizedThresholdOverrides() {
+    return settings.auctionThresholdOverrides && typeof settings.auctionThresholdOverrides === "object"
+      ? settings.auctionThresholdOverrides
+      : {};
+  }
+
+  function normalizeThreshold(value, fallback = 30) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? Math.min(86400, Math.max(1, parsed)) : fallback;
+  }
+
+  function auctionThresholdSeconds(auctionId) {
+    const globalThreshold = normalizeThreshold(settings.thresholdSeconds, 30);
+    const override = normalizedThresholdOverrides()[auctionId];
+    return override === undefined ? globalThreshold : normalizeThreshold(override, globalThreshold);
+  }
+
   function isAuctionAlertEnabled(auctionId) {
     const overrides = normalizedOverrides();
     if (Object.prototype.hasOwnProperty.call(overrides, auctionId)) {
@@ -572,7 +591,9 @@
       style.textContent = `
         :host { position: fixed; right: 22px; bottom: 22px; z-index: 2147483647; color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
         .card { display: flex; width: 286px; align-items: center; gap: 12px; padding: 13px 14px; border: 1px solid rgba(255, 255, 255, 0.13); border-radius: 15px; color: #f7f8fc; background: rgba(23, 27, 38, 0.96); box-shadow: 0 16px 42px rgba(0, 0, 0, 0.42); backdrop-filter: blur(12px); }
-        .mark { display: grid; flex: 0 0 auto; width: 36px; height: 36px; place-items: center; border-radius: 11px; color: #fff; background: linear-gradient(145deg, #5665f5, #754bd9); font-size: 18px; font-weight: 900; }
+        .mark { display: grid; flex: 0 0 auto; width: 36px; height: 36px; padding: 0; place-items: center; border: 0; border-radius: 11px; color: #fff; background: linear-gradient(145deg, #5665f5, #754bd9); cursor: pointer; font: inherit; font-size: 18px; font-weight: 900; transition: transform 120ms ease, filter 120ms ease; }
+        .mark:hover { filter: brightness(1.12); transform: translateY(-1px); }
+        .mark:focus-visible { outline: 3px solid rgba(113, 122, 255, 0.45); outline-offset: 3px; }
         .copy { min-width: 0; flex: 1; }
         .label, .title { display: block; }
         .label { font-size: 12px; font-weight: 800; }
@@ -584,11 +605,13 @@
         input:focus-visible { outline: 3px solid rgba(113, 122, 255, 0.38); outline-offset: 3px; }
       `;
 
-      const card = document.createElement("label");
+      const card = document.createElement("div");
       card.className = "card";
-      const mark = document.createElement("span");
+      const mark = document.createElement("button");
+      mark.type = "button";
       mark.className = "mark";
-      mark.setAttribute("aria-hidden", "true");
+      mark.setAttribute("aria-label", "Ouvrir les paramètres de l’extension");
+      mark.title = "Ouvrir les paramètres";
       mark.textContent = "W";
       const copy = document.createElement("span");
       copy.className = "copy";
@@ -605,6 +628,14 @@
       copy.append(label, title);
       card.append(mark, copy, toggle);
       shadow.append(style, card);
+
+      mark.addEventListener("click", () => {
+        chrome.runtime.sendMessage({ type: "OPEN_SETTINGS" }, () => {
+          if (chrome.runtime.lastError) {
+            console.debug("WikiMasters Alert: paramètres indisponibles", chrome.runtime.lastError.message);
+          }
+        });
+      });
 
       toggle.addEventListener("change", async () => {
         toggle.disabled = true;
@@ -686,7 +717,8 @@
         id,
         title,
         secondsRemaining,
-        enabled: isAuctionAlertEnabled(id)
+        enabled: isAuctionAlertEnabled(id),
+        thresholdSeconds: auctionThresholdSeconds(id)
       }))
     };
 
@@ -703,7 +735,7 @@
       }
 
       const cycle = cycleForAuction(auction, now);
-      if (!cycle.alerted && auction.secondsRemaining <= settings.thresholdSeconds) {
+      if (!cycle.alerted && auction.secondsRemaining <= auctionThresholdSeconds(auction.id)) {
         sendThresholdAlert(auction, cycle);
       }
     }
@@ -780,6 +812,7 @@
       indicatesClosedAuction,
       isAuctionDetailPage,
       findLabeledCountdownElements,
+      isUsableAuctionTitle,
       parseCountdown,
       readEmbeddedTimerValue
     });

@@ -36,6 +36,8 @@ assert.equal(
 );
 assert.equal(detector.indicatesClosedAuction("Expire dans 49s"), false);
 assert.equal(detector.indicatesClosedAuction("Enchère terminée"), true);
+assert.equal(detector.isUsableAuctionTitle({ textContent: "WikiMasters" }, {}), false);
+assert.equal(detector.isUsableAuctionTitle({ textContent: "Yakuza 5" }, {}), true);
 assert.deepEqual(
   JSON.parse(JSON.stringify(detector.readEmbeddedTimerValue({ textContent: "Mise 60 · dans 1m 11s" }))),
   { seconds: 71, sourceText: "dans 1m 11s" }

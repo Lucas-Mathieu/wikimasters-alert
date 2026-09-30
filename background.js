@@ -8,7 +8,8 @@ const DEFAULT_SETTINGS = Object.freeze({
   thresholdSeconds: 30,
   disabledAuctionIds: [],
   auctionAlertsEnabledByDefault: true,
-  auctionAlertOverrides: {}
+  auctionAlertOverrides: {},
+  auctionThresholdOverrides: {}
 });
 
 const SITE_ORIGINS = new Set([
@@ -24,6 +25,8 @@ const HISTORY_TTL_MS = 24 * 60 * 60 * 1000;
 
 const processingCycles = new Set();
 let creatingOffscreenDocument = null;
+let cycleClaimQueue = Promise.resolve();
+let customAlertMutationQueue = Promise.resolve();
 
 chrome.runtime.onInstalled.addListener(() => {
   initializeDefaultSettings().catch((error) => {
@@ -135,6 +138,9 @@ function normalizeSettings(stored) {
     auctionAlertsEnabledByDefault: stored.auctionAlertsEnabledByDefault !== false,
     auctionAlertOverrides: stored.auctionAlertOverrides && typeof stored.auctionAlertOverrides === "object"
       ? stored.auctionAlertOverrides
+      : {},
+    auctionThresholdOverrides: stored.auctionThresholdOverrides && typeof stored.auctionThresholdOverrides === "object"
+      ? stored.auctionThresholdOverrides
       : {},
     thresholdSeconds: Number.isFinite(parsedThreshold)
       ? Math.min(86400, Math.max(1, parsedThreshold))
@@ -259,7 +265,7 @@ async function handleAuctionAlert(rawAuction, sender) {
     return { accepted: false, reason: "auction-disabled" };
   }
 
-  if (auction.secondsRemaining > settings.thresholdSeconds) {
+  if (auction.secondsRemaining > auctionThresholdSeconds(settings, auction.id)) {
     return { accepted: false, reason: "above-threshold" };
   }
 
@@ -287,6 +293,13 @@ function isAuctionAlertEnabled(settings, auctionId) {
   }
 
   return settings.auctionAlertsEnabledByDefault;
+}
+
+function auctionThresholdSeconds(settings, auctionId) {
+  const override = Number.parseInt(settings.auctionThresholdOverrides?.[auctionId], 10);
+  return Number.isFinite(override)
+    ? Math.min(86400, Math.max(1, override))
+    : settings.thresholdSeconds;
 }
 
 async function handleTestAlert() {
@@ -354,23 +367,27 @@ async function claimAuctionCycle(cycleId) {
 
   processingCycles.add(cycleId);
   try {
-    const now = Date.now();
-    const stored = await chrome.storage.session.get(ALERT_HISTORY_KEY);
-    const history = stored[ALERT_HISTORY_KEY] || {};
+    const claim = cycleClaimQueue.then(async () => {
+      const now = Date.now();
+      const stored = await chrome.storage.session.get(ALERT_HISTORY_KEY);
+      const history = stored[ALERT_HISTORY_KEY] || {};
 
-    for (const [key, timestamp] of Object.entries(history)) {
-      if (!Number.isFinite(timestamp) || now - timestamp > HISTORY_TTL_MS) {
-        delete history[key];
+      for (const [key, timestamp] of Object.entries(history)) {
+        if (!Number.isFinite(timestamp) || now - timestamp > HISTORY_TTL_MS) {
+          delete history[key];
+        }
       }
-    }
 
-    if (history[cycleId]) {
-      return false;
-    }
+      if (history[cycleId]) {
+        return false;
+      }
 
-    history[cycleId] = now;
-    await chrome.storage.session.set({ [ALERT_HISTORY_KEY]: history });
-    return true;
+      history[cycleId] = now;
+      await chrome.storage.session.set({ [ALERT_HISTORY_KEY]: history });
+      return true;
+    });
+    cycleClaimQueue = claim.catch(() => {});
+    return await claim;
   } finally {
     processingCycles.delete(cycleId);
   }
@@ -443,42 +460,43 @@ async function getCustomAlerts() {
 }
 
 async function saveCustomAlert(alertId, alert) {
-  const alerts = await getCustomAlerts();
-  alerts[alertId] = alert;
-  await chrome.storage.session.set({ [CUSTOM_ALERTS_KEY]: alerts });
+  return mutateCustomAlerts((alerts) => {
+    alerts[alertId] = alert;
+  });
 }
 
 async function updateCustomAlert(alertId, updates) {
-  const alerts = await getCustomAlerts();
-  if (!alerts[alertId]) return;
-
-  alerts[alertId] = { ...alerts[alertId], ...updates };
-  await chrome.storage.session.set({ [CUSTOM_ALERTS_KEY]: alerts });
+  return mutateCustomAlerts((alerts) => {
+    if (alerts[alertId]) {
+      alerts[alertId] = { ...alerts[alertId], ...updates };
+    }
+  });
 }
 
 async function removeCustomAlert(alertId) {
-  const alerts = await getCustomAlerts();
-
-  if (alerts[alertId]) {
+  return mutateCustomAlerts((alerts) => {
     delete alerts[alertId];
-    await chrome.storage.session.set({ [CUSTOM_ALERTS_KEY]: alerts });
-  }
+  });
 }
 
 async function removeCustomAlertByWindowId(windowId) {
-  const alerts = await getCustomAlerts();
-  let changed = false;
-
-  for (const [alertId, alert] of Object.entries(alerts)) {
-    if (alert.alertWindowId === windowId) {
-      delete alerts[alertId];
-      changed = true;
+  return mutateCustomAlerts((alerts) => {
+    for (const [alertId, alert] of Object.entries(alerts)) {
+      if (alert.alertWindowId === windowId) {
+        delete alerts[alertId];
+      }
     }
-  }
+  });
+}
 
-  if (changed) {
+function mutateCustomAlerts(mutator) {
+  const mutation = customAlertMutationQueue.then(async () => {
+    const alerts = await getCustomAlerts();
+    mutator(alerts);
     await chrome.storage.session.set({ [CUSTOM_ALERTS_KEY]: alerts });
-  }
+  });
+  customAlertMutationQueue = mutation.catch(() => {});
+  return mutation;
 }
 
 async function openCustomAlertTarget(rawAlertId) {
