@@ -53,6 +53,10 @@ Le canal visuel ouvre une petite fenêtre Chrome interne à l’extension. Il ne
 
 Chaque enchère reconnue dans l’onglet actif apparaît également dans la popup avec son propre interrupteur. Désactiver cet interrupteur coupe uniquement cette enchère ; les autres restent surveillées. Ce choix est conservé dans le stockage local de l’extension.
 
+Sur une page détail d’enchère, un interrupteur **Alerte pour cette enchère** est aussi affiché directement en bas à droite de la page. L’option **Alertes actives par défaut** de la popup choisit l’état initial des enchères qui n’ont pas encore de préférence individuelle.
+
+La détection des pages détail s’appuie notamment sur les marqueurs visibles de WikiMasters : **Retour au marché**, **Mise actuelle**, **Temps restant**, **Miser** et **Historique des mises**. Le format `dans 19m 49s` est reconnu explicitement, tandis qu’une heure d’historique telle que `09:35` est ignorée comme signal de compteur.
+
 ## Ajuster la détection du site
 
 La détection générique couvre les compteurs `HH:MM:SS`, `MM:SS`, `32 s`, `32 sec` et `1 min 20 s`. Les sélecteurs spécifiques sont regroupés sous le commentaire `WIKIMASTERS SELECTORS` dans `content.js`.

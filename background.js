@@ -6,7 +6,9 @@ const DEFAULT_SETTINGS = Object.freeze({
   playSound: true,
   bringToFront: false,
   thresholdSeconds: 30,
-  disabledAuctionIds: []
+  disabledAuctionIds: [],
+  auctionAlertsEnabledByDefault: true,
+  auctionAlertOverrides: {}
 });
 
 const SITE_ORIGIN = "https://www.wiki-masters.com";
@@ -80,6 +82,22 @@ async function initializeDefaultSettings() {
     }
   }
 
+  const overrides = stored.auctionAlertOverrides && typeof stored.auctionAlertOverrides === "object"
+    ? { ...stored.auctionAlertOverrides }
+    : {};
+  let migrated = false;
+  if (Array.isArray(stored.disabledAuctionIds)) {
+    for (const id of stored.disabledAuctionIds) {
+      if (typeof id === "string" && !Object.prototype.hasOwnProperty.call(overrides, id)) {
+        overrides[id] = false;
+        migrated = true;
+      }
+    }
+  }
+  if (migrated) {
+    missing.auctionAlertOverrides = Object.fromEntries(Object.entries(overrides).slice(-500));
+  }
+
   if (Object.keys(missing).length > 0) {
     await chrome.storage.local.set(missing);
   }
@@ -95,6 +113,10 @@ function normalizeSettings(stored) {
     disabledAuctionIds: Array.isArray(stored.disabledAuctionIds)
       ? stored.disabledAuctionIds.filter((id) => typeof id === "string").slice(0, 500)
       : [],
+    auctionAlertsEnabledByDefault: stored.auctionAlertsEnabledByDefault !== false,
+    auctionAlertOverrides: stored.auctionAlertOverrides && typeof stored.auctionAlertOverrides === "object"
+      ? stored.auctionAlertOverrides
+      : {},
     thresholdSeconds: Number.isFinite(parsedThreshold)
       ? Math.min(86400, Math.max(1, parsedThreshold))
       : DEFAULT_SETTINGS.thresholdSeconds
@@ -145,7 +167,7 @@ async function handleAuctionAlert(rawAuction, sender) {
     return { accepted: false, reason: "disabled" };
   }
 
-  if (settings.disabledAuctionIds.includes(auction.id)) {
+  if (!isAuctionAlertEnabled(settings, auction.id)) {
     return { accepted: false, reason: "auction-disabled" };
   }
 
@@ -165,6 +187,18 @@ async function handleAuctionAlert(rawAuction, sender) {
   });
 
   return { accepted: true, channels };
+}
+
+function isAuctionAlertEnabled(settings, auctionId) {
+  if (Object.prototype.hasOwnProperty.call(settings.auctionAlertOverrides, auctionId)) {
+    return settings.auctionAlertOverrides[auctionId] !== false;
+  }
+
+  if (settings.disabledAuctionIds.includes(auctionId)) {
+    return false;
+  }
+
+  return settings.auctionAlertsEnabledByDefault;
 }
 
 async function handleTestAlert() {

@@ -152,6 +152,10 @@ h1 {
   min-height: 58px;
 }
 
+.setting-row--default {
+  min-height: 58px;
+}
+
 .setting-row strong,
 .setting-row small {
   display: block;

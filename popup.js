@@ -6,7 +6,8 @@
     showNotification: true,
     playSound: true,
     bringToFront: false,
-    thresholdSeconds: 30
+    thresholdSeconds: 30,
+    auctionAlertsEnabledByDefault: true
   });
 
   const SETTING_IDS = Object.keys(DEFAULT_SETTINGS);
@@ -68,20 +69,30 @@
   }
 
   async function setAuctionEnabled(auctionId, enabled) {
-    const stored = await chrome.storage.local.get({ disabledAuctionIds: [] });
-    const disabled = new Set(
-      Array.isArray(stored.disabledAuctionIds) ? stored.disabledAuctionIds : []
-    );
-
-    if (enabled) {
-      disabled.delete(auctionId);
-    } else {
-      disabled.add(auctionId);
-    }
+    const stored = await chrome.storage.local.get({ auctionAlertOverrides: {} });
+    const overrides = stored.auctionAlertOverrides && typeof stored.auctionAlertOverrides === "object"
+      ? { ...stored.auctionAlertOverrides }
+      : {};
+    overrides[auctionId] = Boolean(enabled);
 
     await chrome.storage.local.set({
-      disabledAuctionIds: Array.from(disabled).slice(-500)
+      auctionAlertOverrides: Object.fromEntries(Object.entries(overrides).slice(-500))
     });
+  }
+
+  function effectiveAuctionState(auctionId, stored) {
+    const overrides = stored.auctionAlertOverrides && typeof stored.auctionAlertOverrides === "object"
+      ? stored.auctionAlertOverrides
+      : {};
+    if (Object.prototype.hasOwnProperty.call(overrides, auctionId)) {
+      return overrides[auctionId] !== false;
+    }
+
+    if (Array.isArray(stored.disabledAuctionIds) && stored.disabledAuctionIds.includes(auctionId)) {
+      return false;
+    }
+
+    return stored.auctionAlertsEnabledByDefault !== false;
   }
 
   async function refreshMonitorStatus() {
@@ -98,13 +109,14 @@
         throw new Error("Réponse de surveillance absente");
       }
 
-      const stored = await chrome.storage.local.get({ disabledAuctionIds: [] });
-      const disabledIds = new Set(
-        Array.isArray(stored.disabledAuctionIds) ? stored.disabledAuctionIds : []
-      );
+      const stored = await chrome.storage.local.get({
+        disabledAuctionIds: [],
+        auctionAlertsEnabledByDefault: true,
+        auctionAlertOverrides: {}
+      });
       const auctions = response.auctions.map((auction) => ({
         ...auction,
-        enabled: !disabledIds.has(auction.id)
+        enabled: effectiveAuctionState(auction.id, stored)
       }));
 
       if (!response.scannedAt) {

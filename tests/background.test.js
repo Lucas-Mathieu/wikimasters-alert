@@ -14,7 +14,9 @@ let localSettings = {
   playSound: false,
   bringToFront: false,
   thresholdSeconds: 40,
-  disabledAuctionIds: []
+  disabledAuctionIds: [],
+  auctionAlertsEnabledByDefault: true,
+  auctionAlertOverrides: {}
 };
 
 const listeners = {
@@ -99,6 +101,17 @@ vm.runInContext(source, context, { filename: "background.js" });
   );
   assert.equal(disabled.accepted, false);
   assert.equal(disabled.reason, "auction-disabled");
+
+  assert.equal(vm.runInContext(`isAuctionAlertEnabled({
+    disabledAuctionIds: [],
+    auctionAlertsEnabledByDefault: false,
+    auctionAlertOverrides: {}
+  }, "auction-new")`, context), false);
+  assert.equal(vm.runInContext(`isAuctionAlertEnabled({
+    disabledAuctionIds: [],
+    auctionAlertsEnabledByDefault: false,
+    auctionAlertOverrides: { "auction-new": true }
+  }, "auction-new")`, context), true);
 
   console.log("Fenêtre Chrome, gestion d’erreur et désactivation par enchère validées.");
 })().catch((error) => {
