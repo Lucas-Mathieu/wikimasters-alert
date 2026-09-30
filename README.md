@@ -46,7 +46,7 @@ Exécuter `node tests/content.test.js` puis `node tests/background.test.js` depu
 
 La popup affiche aussi le nombre d’enchères reconnues dans l’onglet WikiMasters actif. Après une mise à jour de l’extension, il faut recharger cet onglet pour injecter la nouvelle version du détecteur.
 
-Si le test indique **Notification créée par Chrome** sans rien afficher à l’écran, l’API a accepté la notification mais Windows ou Chrome la masque. Vérifier alors **Paramètres Windows → Système → Notifications → Google Chrome**, ainsi que le mode *Ne pas déranger*. Si Chrome refuse directement le canal, l’erreur exacte apparaît dans la popup.
+Le canal visuel ouvre une petite fenêtre Chrome interne à l’extension. Il ne dépend pas des notifications Windows ni du mode *Ne pas déranger*. Le bouton **Voir l’enchère** ramène à l’onglet d’origine.
 
 ## Ajuster la détection du site
 

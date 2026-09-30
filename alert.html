@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Alerte WikiMasters</title>
+    <link rel="stylesheet" href="alert.css">
+  </head>
+  <body>
+    <main class="alert-shell">
+      <div class="alert-icon" aria-hidden="true">
+        <img src="icons/icon48.png" alt="">
+      </div>
+      <p id="eyebrow" class="eyebrow">Enchère bientôt terminée</p>
+      <h1 id="auctionTitle">Enchère WikiMasters</h1>
+      <p class="countdown"><strong id="duration">—</strong> restantes</p>
+      <p id="error" class="error" role="status" aria-live="polite"></p>
+      <div class="actions">
+        <button id="dismiss" class="button button--secondary" type="button">Fermer</button>
+        <button id="openAuction" class="button button--primary" type="button">Voir l’enchère</button>
+      </div>
+    </main>
+    <script src="alert.js"></script>
+  </body>
+</html>

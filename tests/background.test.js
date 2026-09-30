@@ -5,15 +5,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-let permissionLevel = "granted";
-let createdNotification = null;
+let customWindowError = null;
+let createdWindow = null;
 let sessionStore = {};
 
 const listeners = {
   installed: null,
   message: null,
-  notificationClicked: null,
-  notificationClosed: null
+  windowRemoved: null
 };
 
 const wikiTab = {
@@ -29,16 +28,6 @@ const chrome = {
     onInstalled: { addListener: (listener) => { listeners.installed = listener; } },
     onMessage: { addListener: (listener) => { listeners.message = listener; } },
     sendMessage: async () => ({ ok: true })
-  },
-  notifications: {
-    getPermissionLevel: async () => permissionLevel,
-    create: async (id, options) => {
-      createdNotification = { id, options };
-      return id;
-    },
-    clear: async () => true,
-    onClicked: { addListener: (listener) => { listeners.notificationClicked = listener; } },
-    onClosed: { addListener: (listener) => { listeners.notificationClosed = listener; } }
   },
   storage: {
     local: {
@@ -62,7 +51,13 @@ const chrome = {
     update: async () => wikiTab
   },
   windows: {
-    update: async () => ({})
+    create: async (options) => {
+      if (customWindowError) throw customWindowError;
+      createdWindow = { id: 81, options };
+      return { id: 81 };
+    },
+    update: async () => ({}),
+    onRemoved: { addListener: (listener) => { listeners.windowRemoved = listener; } }
   },
   offscreen: {
     createDocument: async () => {}
@@ -77,19 +72,20 @@ vm.runInContext(source, context, { filename: "background.js" });
 (async () => {
   const success = await vm.runInContext("handleTestAlert()", context);
   assert.equal(success.channels.notification.ok, true);
-  assert.equal(createdNotification.options.type, "basic");
-  assert.equal(createdNotification.options.requireInteraction, true);
-  assert.match(createdNotification.options.title, /Test/);
+  assert.equal(success.channels.notification.details.mode, "custom-window");
+  assert.equal(createdWindow.options.type, "popup");
+  assert.match(createdWindow.options.url, /alert\.html\?alert=/);
+  assert.equal(createdWindow.options.focused, true);
 
-  permissionLevel = "denied";
-  const denied = await vm.runInContext("handleTestAlert()", context);
-  assert.equal(denied.channels.notification.ok, false);
-  assert.match(denied.channels.notification.error, /non autorisées/);
+  customWindowError = new Error("window creation failed");
+  const failed = await vm.runInContext("handleTestAlert()", context);
+  assert.equal(failed.channels.notification.ok, false);
+  assert.match(failed.channels.notification.error, /window creation failed/);
 
   assert.ok(listeners.message, "Le service worker doit écouter les messages");
-  assert.ok(listeners.notificationClicked, "Le clic sur notification doit être géré");
+  assert.ok(listeners.windowRemoved, "La fermeture de la fenêtre doit être gérée");
 
-  console.log("Canal de notification et diagnostic de permission validés.");
+  console.log("Fenêtre d’alerte Chrome et gestion d’erreur validées.");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

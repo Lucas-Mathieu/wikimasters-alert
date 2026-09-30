@@ -123,15 +123,15 @@
 
       const notification = response.channels?.notification;
       if (notification?.requested && !notification.ok) {
-        updateStatus(false, "Notification refusée");
+        updateStatus(false, "Fenêtre d’alerte impossible");
         statusElement.className = "status status--error";
-        setMonitorDetail(notification.error || "Chrome a refusé la notification.", true);
+        setMonitorDetail(notification.error || "Chrome n’a pas créé la fenêtre d’alerte.", true);
       } else if (notification?.ok) {
-        updateStatus(controls.enabled.checked, "Notification créée par Chrome");
-        setMonitorDetail("Si rien ne s’affiche, vérifiez les notifications Chrome dans Windows.");
+        updateStatus(controls.enabled.checked, "Fenêtre d’alerte Chrome ouverte");
+        setMonitorDetail("Cette alerte ne dépend pas des notifications Windows.");
       } else {
-        updateStatus(controls.enabled.checked, "Test exécuté sans notification");
-        setMonitorDetail("Activez « Afficher une notification » pour tester ce canal.");
+        updateStatus(controls.enabled.checked, "Test exécuté sans fenêtre d’alerte");
+        setMonitorDetail("Activez « Afficher une alerte Chrome » pour tester ce canal.");
       }
 
       window.setTimeout(async () => {

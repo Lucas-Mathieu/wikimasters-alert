@@ -11,7 +11,7 @@ const DEFAULT_SETTINGS = Object.freeze({
 const SITE_ORIGIN = "https://www.wiki-masters.com";
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const ALERT_HISTORY_KEY = "alertedAuctionCycles";
-const NOTIFICATION_TARGETS_KEY = "notificationTargets";
+const CUSTOM_ALERTS_KEY = "customAlertWindows";
 const HISTORY_TTL_MS = 24 * 60 * 60 * 1000;
 
 const processingCycles = new Set();
@@ -48,19 +48,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "OPEN_CUSTOM_ALERT") {
+    openCustomAlertTarget(message.alertId)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "DISMISS_CUSTOM_ALERT") {
+    removeCustomAlert(message.alertId)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   return false;
 });
 
-chrome.notifications.onClicked.addListener((notificationId) => {
-  focusNotificationTarget(notificationId)
-    .catch((error) => {
-      console.error("WikiMasters Alert: onglet de la notification introuvable", error);
-    })
-    .finally(() => chrome.notifications.clear(notificationId));
-});
-
-chrome.notifications.onClosed.addListener((notificationId) => {
-  removeNotificationTarget(notificationId).catch(() => {});
+chrome.windows.onRemoved.addListener((windowId) => {
+  removeCustomAlertByWindowId(windowId).catch(() => {});
 });
 
 async function initializeDefaultSettings() {
@@ -171,37 +177,44 @@ async function handleTestAlert() {
 async function dispatchAlert({ auction, settings, tab, isTest }) {
   const operations = [];
 
+  const channels = {
+    notification: { requested: settings.showNotification, ok: null },
+    sound: { requested: settings.playSound, ok: null },
+    focus: { requested: settings.bringToFront, ok: null }
+  };
+
+  if (settings.bringToFront && tab) {
+    channels.focus = await runAlertOperation(() => focusTab(tab.id, tab.windowId));
+  }
+
   if (settings.showNotification) {
-    operations.push(["notification", () => showNotification(auction, tab, isTest)]);
+    operations.push(["notification", () => showCustomAlertWindow(auction, tab, isTest)]);
   }
 
   if (settings.playSound) {
     operations.push(["sound", () => playAlertSound()]);
   }
 
-  if (settings.bringToFront && tab) {
-    operations.push(["focus", () => focusTab(tab.id, tab.windowId)]);
-  }
-
   const entries = await Promise.all(operations.map(async ([name, operation]) => {
-    try {
-      const details = await operation();
-      return [name, { requested: true, ok: true, details: details || null }];
-    } catch (error) {
-      console.error(`WikiMasters Alert: canal ${name} en échec`, error);
-      return [name, {
-        requested: true,
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
-      }];
-    }
+    return [name, await runAlertOperation(operation, name)];
   }));
 
-  const channels = Object.fromEntries(entries);
-  channels.notification ??= { requested: settings.showNotification, ok: null };
-  channels.sound ??= { requested: settings.playSound, ok: null };
-  channels.focus ??= { requested: settings.bringToFront, ok: null };
+  Object.assign(channels, Object.fromEntries(entries));
   return channels;
+}
+
+async function runAlertOperation(operation, name = "focus") {
+  try {
+    const details = await operation();
+    return { requested: true, ok: true, details: details || null };
+  } catch (error) {
+    console.error(`WikiMasters Alert: canal ${name} en échec`, error);
+    return {
+      requested: true,
+      ok: false,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
 }
 
 async function claimAuctionCycle(cycleId) {
@@ -250,74 +263,108 @@ function formatDuration(totalSeconds) {
   return `${minutes} min ${String(remainingSeconds).padStart(2, "0")} s`;
 }
 
-async function showNotification(auction, tab, isTest) {
-  const permissionLevel = await chrome.notifications.getPermissionLevel();
-  if (permissionLevel !== "granted") {
-    throw new Error(`Notifications Chrome non autorisées (${permissionLevel})`);
-  }
-
-  const notificationId = `wikimasters-${isTest ? "test" : "auction"}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const title = isTest ? "Test de l’alerte WikiMasters" : "Une enchère se termine bientôt";
-  const message = `${formatDuration(auction.secondsRemaining)} restante${auction.secondsRemaining > 1 ? "s" : ""}`;
-
-  if (tab) {
-    await saveNotificationTarget(notificationId, tab);
-  }
+async function showCustomAlertWindow(auction, tab, isTest) {
+  const alertId = `alert-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  await saveCustomAlert(alertId, {
+    alertId,
+    isTest,
+    title: auction.title,
+    duration: formatDuration(auction.secondsRemaining),
+    secondsRemaining: auction.secondsRemaining,
+    tabId: tab?.id ?? null,
+    sourceWindowId: tab?.windowId ?? null,
+    createdAt: Date.now(),
+    alertWindowId: null
+  });
 
   try {
-    await chrome.notifications.create(notificationId, {
-      type: "basic",
-      iconUrl: chrome.runtime.getURL("icons/icon128.png"),
-      title,
-      message,
-      contextMessage: auction.title,
-      priority: 2,
-      requireInteraction: true
+    const alertWindow = await chrome.windows.create({
+      url: chrome.runtime.getURL(`alert.html?alert=${encodeURIComponent(alertId)}`),
+      type: "popup",
+      width: 390,
+      height: 270,
+      focused: true
     });
+
+    if (!Number.isInteger(alertWindow?.id)) {
+      throw new Error("Chrome n’a pas créé la fenêtre d’alerte");
+    }
+
+    await updateCustomAlert(alertId, { alertWindowId: alertWindow.id });
+    return { alertId, mode: "custom-window", windowId: alertWindow.id };
   } catch (error) {
-    await removeNotificationTarget(notificationId);
+    await removeCustomAlert(alertId);
     throw error;
   }
-
-  return { notificationId, permissionLevel };
 }
 
-async function saveNotificationTarget(notificationId, tab) {
-  const stored = await chrome.storage.session.get(NOTIFICATION_TARGETS_KEY);
-  const targets = stored[NOTIFICATION_TARGETS_KEY] || {};
-  targets[notificationId] = {
-    tabId: tab.id,
-    windowId: tab.windowId,
-    savedAt: Date.now()
-  };
+async function getCustomAlerts() {
+  const stored = await chrome.storage.session.get(CUSTOM_ALERTS_KEY);
+  const alerts = stored[CUSTOM_ALERTS_KEY] || {};
+  const now = Date.now();
 
-  for (const [id, target] of Object.entries(targets)) {
-    if (!target?.savedAt || Date.now() - target.savedAt > HISTORY_TTL_MS) {
-      delete targets[id];
+  for (const [id, alert] of Object.entries(alerts)) {
+    if (!alert?.createdAt || now - alert.createdAt > HISTORY_TTL_MS) {
+      delete alerts[id];
     }
   }
 
-  await chrome.storage.session.set({ [NOTIFICATION_TARGETS_KEY]: targets });
+  return alerts;
 }
 
-async function removeNotificationTarget(notificationId) {
-  const stored = await chrome.storage.session.get(NOTIFICATION_TARGETS_KEY);
-  const targets = stored[NOTIFICATION_TARGETS_KEY] || {};
+async function saveCustomAlert(alertId, alert) {
+  const alerts = await getCustomAlerts();
+  alerts[alertId] = alert;
+  await chrome.storage.session.set({ [CUSTOM_ALERTS_KEY]: alerts });
+}
 
-  if (targets[notificationId]) {
-    delete targets[notificationId];
-    await chrome.storage.session.set({ [NOTIFICATION_TARGETS_KEY]: targets });
+async function updateCustomAlert(alertId, updates) {
+  const alerts = await getCustomAlerts();
+  if (!alerts[alertId]) return;
+
+  alerts[alertId] = { ...alerts[alertId], ...updates };
+  await chrome.storage.session.set({ [CUSTOM_ALERTS_KEY]: alerts });
+}
+
+async function removeCustomAlert(alertId) {
+  const alerts = await getCustomAlerts();
+
+  if (alerts[alertId]) {
+    delete alerts[alertId];
+    await chrome.storage.session.set({ [CUSTOM_ALERTS_KEY]: alerts });
   }
 }
 
-async function focusNotificationTarget(notificationId) {
-  const stored = await chrome.storage.session.get(NOTIFICATION_TARGETS_KEY);
-  const target = stored[NOTIFICATION_TARGETS_KEY]?.[notificationId];
+async function removeCustomAlertByWindowId(windowId) {
+  const alerts = await getCustomAlerts();
+  let changed = false;
 
-  if (target) {
-    await focusTab(target.tabId, target.windowId);
-    await removeNotificationTarget(notificationId);
+  for (const [alertId, alert] of Object.entries(alerts)) {
+    if (alert.alertWindowId === windowId) {
+      delete alerts[alertId];
+      changed = true;
+    }
   }
+
+  if (changed) {
+    await chrome.storage.session.set({ [CUSTOM_ALERTS_KEY]: alerts });
+  }
+}
+
+async function openCustomAlertTarget(rawAlertId) {
+  const alertId = String(rawAlertId || "").slice(0, 100);
+  const alerts = await getCustomAlerts();
+  const alert = alerts[alertId];
+
+  if (!alert) {
+    throw new Error("Cette alerte a expiré");
+  }
+
+  if (Number.isInteger(alert.tabId)) {
+    await focusTab(alert.tabId, alert.sourceWindowId);
+  }
+
+  await removeCustomAlert(alertId);
 }
 
 async function focusTab(tabId, knownWindowId) {
