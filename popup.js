@@ -42,6 +42,18 @@
     return minutes > 0 ? `${minutes} min ${remainingSeconds} s` : `${remainingSeconds} s`;
   }
 
+  function updateAuctionCountdowns() {
+    const now = Date.now();
+    for (const meta of auctionList.querySelectorAll(".auction-item__meta")) {
+      const estimatedEndAt = Number(meta.dataset.estimatedEndAt);
+      const secondsRemaining = Number.isFinite(estimatedEndAt)
+        ? Math.max(0, Math.ceil((estimatedEndAt - now) / 1000))
+        : 0;
+      const state = meta.dataset.enabled === "true" ? "alerte active" : "alerte coupée";
+      meta.textContent = `${formatDuration(secondsRemaining)} restantes · ${state}`;
+    }
+  }
+
   function renderAuctionControls(auctions) {
     auctionList.replaceChildren();
     auctionControls.hidden = auctions.length === 0;
@@ -62,7 +74,10 @@
 
       const meta = document.createElement("span");
       meta.className = "auction-item__meta";
-      meta.textContent = `${formatDuration(auction.secondsRemaining)} restantes · ${auction.enabled ? "alerte active" : "alerte coupée"}`;
+      meta.dataset.estimatedEndAt = String(
+        Number(auction.estimatedEndAt) || Date.now() + auction.secondsRemaining * 1000
+      );
+      meta.dataset.enabled = String(auction.enabled !== false);
 
       const toggle = document.createElement("input");
       toggle.type = "checkbox";
@@ -96,6 +111,8 @@
       row.append(main, threshold);
       auctionList.append(row);
     }
+
+    updateAuctionCountdowns();
   }
 
   async function setAuctionEnabled(auctionId, enabled) {
@@ -308,4 +325,5 @@
   window.setInterval(() => {
     refreshMonitorStatus().catch(() => {});
   }, 1500);
+  window.setInterval(updateAuctionCountdowns, 250);
 })();

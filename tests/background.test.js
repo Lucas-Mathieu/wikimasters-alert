@@ -252,7 +252,22 @@ vm.runInContext(source, context, { filename: "background.js" });
   );
   assert.equal(alarmResult.accepted, true);
   assert.ok(clearedAlarms.includes(scheduledAlarmName));
+  assert.equal(sessionStore.scheduledAuctionAlerts[scheduledAlarmName].alerted, true);
+
+  queryTabs = [wikiTab];
+  tabResponses = new Map();
+  const independentlyCounted = await vm.runInContext("collectOpenAuctions()", context);
+  assert.equal(independentlyCounted.auctions.length, 1);
+  assert.equal(independentlyCounted.respondingTabs, 0);
+  assert.ok(independentlyCounted.auctions[0].secondsRemaining <= 10);
+  assert.ok(independentlyCounted.auctions[0].secondsRemaining > 0);
+
+  await vm.runInContext(
+    `removeScheduledAuction(${JSON.stringify(scheduledAlarmName)})`,
+    context
+  );
   assert.equal(sessionStore.scheduledAuctionAlerts[scheduledAlarmName], undefined);
+  queryTabs = manyTabs;
 
   createdAlarms = [];
   const scheduledAcrossTabs = await Promise.all(manyTabs.map((tab, index) => vm.runInContext(
@@ -290,7 +305,7 @@ vm.runInContext(source, context, { filename: "background.js" });
     15
   );
 
-  console.log("Déclenchement différé, agrégation et 15 enchères simultanées validés.");
+  console.log("Compte à rebours indépendant, agrégation et 15 enchères simultanées validés.");
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

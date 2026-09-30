@@ -753,6 +753,7 @@
           id: auction.id,
           title: auction.title,
           secondsRemaining: auction.secondsRemaining,
+          estimatedEndAt: cycle.estimatedEndAt,
           cycleId: cycle.cycleId,
           pageUrl: location.href
         }
@@ -785,6 +786,7 @@
           id: auction.id,
           title: auction.title,
           secondsRemaining: auction.secondsRemaining,
+          estimatedEndAt: cycle.estimatedEndAt,
           cycleId: cycle.cycleId,
           pageUrl: location.href
         }
@@ -824,13 +826,13 @@
     }
 
     for (const auction of activeAuctions) {
+      const cycle = cycleForAuction(auction, now);
+      reportAuctionSnapshot(auction, cycle, now);
+
       if (!isAuctionAlertEnabled(auction.id)) {
-        auctionCycles.delete(auction.id);
         continue;
       }
 
-      const cycle = cycleForAuction(auction, now);
-      reportAuctionSnapshot(auction, cycle, now);
       if (!cycle.alerted && auction.secondsRemaining <= auctionThresholdSeconds(auction.id)) {
         sendThresholdAlert(auction, cycle);
       }

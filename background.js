@@ -185,6 +185,27 @@ async function queryWikiMastersTabs() {
 
 async function collectOpenAuctions() {
   const tabs = (await queryWikiMastersTabs()).filter(isWikiMastersTab);
+  const tabsById = new Map(tabs.map((tab) => [tab.id, tab]));
+  const scheduled = await getScheduledAuctions();
+  const auctionsById = new Map();
+  const now = Date.now();
+
+  for (const entry of Object.values(scheduled)) {
+    const tab = tabsById.get(entry.tabId);
+    const secondsRemaining = Math.max(0, Math.ceil((entry.estimatedEndAt - now) / 1000));
+    if (!tab || tab.url !== entry.pageUrl || secondsRemaining <= 0) continue;
+
+    auctionsById.set(entry.auction.id, {
+      id: entry.auction.id,
+      title: entry.auction.title,
+      secondsRemaining,
+      estimatedEndAt: entry.estimatedEndAt,
+      tabId: tab.id,
+      windowId: tab.windowId,
+      pageUrl: tab.url
+    });
+  }
+
   const responses = await Promise.all(tabs.map(async (tab) => {
     try {
       const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_MONITOR_STATUS" });
@@ -194,7 +215,6 @@ async function collectOpenAuctions() {
     }
   }));
 
-  const auctionsById = new Map();
   let respondingTabs = 0;
 
   for (const entry of responses) {
@@ -202,10 +222,13 @@ async function collectOpenAuctions() {
     respondingTabs += 1;
 
     for (const auction of entry.response.auctions || []) {
+      const registered = scheduled[auctionAlarmName(String(auction.id || ""))];
+      const estimatedEndAt = registered?.estimatedEndAt || now + (Number(auction.secondsRemaining) || 0) * 1000;
       const normalized = {
         id: String(auction.id || "").slice(0, 300),
         title: String(auction.title || "Enchère WikiMasters").trim().slice(0, 160),
-        secondsRemaining: Math.max(0, Math.round(Number(auction.secondsRemaining) || 0)),
+        secondsRemaining: Math.max(0, Math.ceil((estimatedEndAt - now) / 1000)),
+        estimatedEndAt,
         tabId: entry.tab.id,
         windowId: entry.tab.windowId,
         pageUrl: entry.tab.url
@@ -263,11 +286,21 @@ function validateAuctionPayload(auction, sender) {
     throw new Error("Cycle d’enchère manquant");
   }
 
+  const now = Date.now();
+  const reportedEndAt = Number(auction.estimatedEndAt);
+  const fallbackEndAt = now + secondsRemaining * 1000;
+  const estimatedEndAt = Number.isFinite(reportedEndAt) &&
+    reportedEndAt >= now - 5 * 60 * 1000 &&
+    reportedEndAt <= now + 30 * 24 * 60 * 60 * 1000
+    ? Math.round(reportedEndAt)
+    : fallbackEndAt;
+
   return {
     id: String(auction.id || "enchere").slice(0, 300),
     cycleId,
     title: String(auction.title || "Enchère WikiMasters").trim().slice(0, 160),
     secondsRemaining: Math.round(secondsRemaining),
+    estimatedEndAt,
     pageUrl: String(auction.pageUrl || sender.tab.url).slice(0, 2000)
   };
 }
@@ -289,21 +322,14 @@ async function scheduleAuctionAlert(rawAuction, sender) {
   const auction = validateAuctionPayload(rawAuction, sender);
   const settings = await getSettings();
   const alarmName = auctionAlarmName(auction.id);
-
-  if (!settings.enabled || !isAuctionAlertEnabled(settings, auction.id)) {
-    await removeScheduledAuction(alarmName);
-    return { scheduled: false, reason: "disabled" };
-  }
-
+  const scheduled = await getScheduledAuctions();
+  const previous = scheduled[alarmName];
+  const alreadyAlerted = previous?.auction?.cycleId === auction.cycleId && previous.alerted === true;
   const now = Date.now();
   const thresholdSeconds = auctionThresholdSeconds(settings, auction.id);
-  const estimatedEndAt = now + auction.secondsRemaining * 1000;
+  const estimatedEndAt = auction.estimatedEndAt;
   const scheduledFor = estimatedEndAt - thresholdSeconds * 1000;
-
-  if (scheduledFor <= now + 250) {
-    await removeScheduledAuction(alarmName);
-    return handleAuctionAlert(auction, sender);
-  }
+  const enabled = settings.enabled && isAuctionAlertEnabled(settings, auction.id);
 
   await mutateScheduledAuctions((scheduled) => {
     scheduled[alarmName] = {
@@ -312,9 +338,29 @@ async function scheduleAuctionAlert(rawAuction, sender) {
       windowId: sender.tab.windowId,
       pageUrl: sender.tab.url,
       estimatedEndAt,
-      scheduledFor
+      scheduledFor: enabled && !alreadyAlerted ? scheduledFor : null,
+      alerted: alreadyAlerted,
+      enabled
     };
   });
+
+  if (!enabled) {
+    await chrome.alarms.clear(alarmName);
+    return { scheduled: false, reason: "disabled", estimatedEndAt };
+  }
+
+  if (alreadyAlerted) {
+    await chrome.alarms.clear(alarmName);
+    return { scheduled: false, reason: "already-alerted", estimatedEndAt };
+  }
+
+  if (scheduledFor <= now + 250) {
+    await chrome.alarms.clear(alarmName);
+    const result = await handleAuctionAlert(auction, sender);
+    await markScheduledAuctionAlerted(alarmName);
+    return result;
+  }
+
   await chrome.alarms.create(alarmName, { when: scheduledFor });
 
   return { scheduled: true, scheduledFor };
@@ -329,7 +375,13 @@ async function handleAuctionAlarm(alarm) {
 
   const settings = await getSettings();
   if (!settings.enabled || !isAuctionAlertEnabled(settings, entry.auction.id)) {
-    await removeScheduledAuction(alarm.name);
+    await chrome.alarms.clear(alarm.name);
+    await mutateScheduledAuctions((items) => {
+      if (items[alarm.name]) {
+        items[alarm.name].enabled = false;
+        items[alarm.name].scheduledFor = null;
+      }
+    });
     return { accepted: false, reason: "disabled" };
   }
 
@@ -363,7 +415,7 @@ async function handleAuctionAlarm(alarm) {
     { ...entry.auction, secondsRemaining },
     { tab }
   );
-  await removeScheduledAuction(alarm.name);
+  await markScheduledAuctionAlerted(alarm.name);
   return result;
 }
 
@@ -386,6 +438,16 @@ async function removeScheduledAuction(alarmName) {
   await chrome.alarms.clear(alarmName);
   await mutateScheduledAuctions((scheduled) => {
     delete scheduled[alarmName];
+  });
+}
+
+async function markScheduledAuctionAlerted(alarmName) {
+  await chrome.alarms.clear(alarmName);
+  await mutateScheduledAuctions((scheduled) => {
+    if (scheduled[alarmName]) {
+      scheduled[alarmName].alerted = true;
+      scheduled[alarmName].scheduledFor = null;
+    }
   });
 }
 

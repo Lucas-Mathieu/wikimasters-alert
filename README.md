@@ -57,6 +57,8 @@ Si Chrome verrouille temporairement les onglets pendant un glisser-déposer, l�
 
 Le déclenchement est aussi programmé dans le service worker avec `chrome.alarms` dès qu’un compteur est détecté. Cela évite que le ralentissement des timers JavaScript dans les fenêtres minimisées retarde l’alerte ; la lecture régulière du DOM reste active pour corriger l’horaire lorsque WikiMasters prolonge une enchère.
 
+Le temps affiché dans la popup est recalculé à partir de l’heure de fin enregistrée par le service worker. Il continue donc à diminuer localement même si l’onglet WikiMasters est figé, déchargé ou inutilisé depuis longtemps.
+
 Chaque enchère reconnue apparaît dans la popup avec son propre interrupteur et son propre délai d’alerte. Désactiver l’interrupteur ou modifier le délai ne concerne que cette enchère ; les autres restent surveillées. Ces choix sont conservés dans le stockage local de l’extension.
 
 Sur une page détail d’enchère, un interrupteur **Alerte pour cette enchère** est aussi affiché directement en bas à droite de la page. Cliquer sur son logo **W** ouvre les paramètres de l’extension. L’option **Alertes actives par défaut** de la popup choisit l’état initial des enchères qui n’ont pas encore de préférence individuelle.
