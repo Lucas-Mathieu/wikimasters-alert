@@ -16,6 +16,8 @@ let windowUpdates = [];
 let focusRequestAccepted = true;
 let createdAlarms = [];
 let clearedAlarms = [];
+let tabUpdateFailuresRemaining = 0;
+let tabUpdateAttempts = 0;
 let sessionStore = {};
 let localSettings = {
   enabled: true,
@@ -67,7 +69,14 @@ const chrome = {
       return tabResponses.get(tabId);
     },
     get: async () => wikiTab,
-    update: async () => wikiTab
+    update: async () => {
+      tabUpdateAttempts += 1;
+      if (tabUpdateFailuresRemaining > 0) {
+        tabUpdateFailuresRemaining -= 1;
+        throw new Error("Tabs cannot be edited right now (user may be dragging a tab).");
+      }
+      return wikiTab;
+    }
   },
   action: {
     openPopup: async ({ windowId } = {}) => { popupOpenedForWindow = windowId ?? null; }
@@ -102,8 +111,14 @@ const chrome = {
 };
 
 const source = fs.readFileSync(path.join(__dirname, "..", "background.js"), "utf8");
-const testConsole = { ...console, error: () => {} };
-const context = vm.createContext({ chrome, console: testConsole, URL, self: { clients: { matchAll: async () => [] } } });
+const testConsole = { ...console, error: () => {}, warn: () => {} };
+const context = vm.createContext({
+  chrome,
+  console: testConsole,
+  setTimeout,
+  URL,
+  self: { clients: { matchAll: async () => [] } }
+});
 vm.runInContext(source, context, { filename: "background.js" });
 
 (async () => {
@@ -207,6 +222,11 @@ vm.runInContext(source, context, { filename: "background.js" });
     { windowId: wikiTab.windowId, options: { drawAttention: true } }
   ]);
   focusRequestAccepted = true;
+
+  tabUpdateFailuresRemaining = 2;
+  tabUpdateAttempts = 0;
+  await vm.runInContext(`focusTab(${wikiTab.id}, ${wikiTab.windowId})`, context);
+  assert.equal(tabUpdateAttempts, 3);
 
   customWindowError = null;
   createdAlarms = [];

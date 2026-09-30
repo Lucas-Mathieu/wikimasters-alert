@@ -53,6 +53,8 @@ Le canal visuel ouvre une petite fenêtre Chrome interne à l’extension. Il ne
 
 Lorsque **Mettre l’onglet au premier plan** est activé, une fenêtre Chrome minimisée est d’abord restaurée avant l’activation de l’onglet. Si le système refuse le changement de focus, Chrome demande au minimum l’attention dans la barre des tâches.
 
+Si Chrome verrouille temporairement les onglets pendant un glisser-déposer, l’activation est retentée automatiquement plusieurs fois. Les anciens scripts de page s’arrêtent silencieusement après un rechargement de l’extension afin d’éviter les erreurs `Extension context invalidated`.
+
 Le déclenchement est aussi programmé dans le service worker avec `chrome.alarms` dès qu’un compteur est détecté. Cela évite que le ralentissement des timers JavaScript dans les fenêtres minimisées retarde l’alerte ; la lecture régulière du DOM reste active pour corriger l’horaire lorsque WikiMasters prolonge une enchère.
 
 Chaque enchère reconnue apparaît dans la popup avec son propre interrupteur et son propre délai d’alerte. Désactiver l’interrupteur ou modifier le délai ne concerne que cette enchère ; les autres restent surveillées. Ces choix sont conservés dans le stockage local de l’extension.

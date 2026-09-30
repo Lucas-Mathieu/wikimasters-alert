@@ -20,6 +20,62 @@
   let settings = { ...DEFAULT_SETTINGS };
   let scheduledScan = null;
   let lastScanAt = 0;
+  let pageObserver = null;
+  let fallbackScanTimer = null;
+  let contextStopped = false;
+
+  function extensionContextAvailable() {
+    try {
+      return Boolean(chrome?.runtime?.id);
+    } catch {
+      return false;
+    }
+  }
+
+  function stopMonitoring() {
+    if (contextStopped) return;
+    contextStopped = true;
+
+    if (scheduledScan !== null) {
+      window.clearTimeout(scheduledScan);
+      scheduledScan = null;
+    }
+    if (fallbackScanTimer !== null) {
+      window.clearInterval(fallbackScanTimer);
+      fallbackScanTimer = null;
+    }
+    pageObserver?.disconnect();
+    pageObserver = null;
+    removePageAuctionToggle();
+  }
+
+  function safeSendRuntimeMessage(message, failureLabel) {
+    if (!extensionContextAvailable()) {
+      stopMonitoring();
+      return false;
+    }
+
+    try {
+      chrome.runtime.sendMessage(message, () => {
+        try {
+          const error = chrome.runtime.lastError;
+          if (error && !/extension context invalidated/i.test(error.message || "")) {
+            console.debug(failureLabel, error.message);
+          }
+        } catch {
+          stopMonitoring();
+        }
+      });
+      return true;
+    } catch (error) {
+      if (/extension context invalidated/i.test(error?.message || "")) {
+        stopMonitoring();
+      } else {
+        console.debug(failureLabel, error);
+      }
+      return false;
+    }
+  }
 
   // ===== WIKIMASTERS SELECTORS =====
   // Ajouter en tête de ces listes les sélecteurs relevés dans le DOM authentifié.
@@ -631,11 +687,10 @@
       shadow.append(style, card);
 
       mark.addEventListener("click", () => {
-        chrome.runtime.sendMessage({ type: "OPEN_SETTINGS" }, () => {
-          if (chrome.runtime.lastError) {
-            console.debug("WikiMasters Alert: paramètres indisponibles", chrome.runtime.lastError.message);
-          }
-        });
+        safeSendRuntimeMessage(
+          { type: "OPEN_SETTINGS" },
+          "WikiMasters Alert: paramètres indisponibles"
+        );
       });
 
       toggle.addEventListener("change", async () => {
@@ -643,8 +698,12 @@
         try {
           await storeAuctionOverride(host.dataset.auctionId, toggle.checked);
         } catch (error) {
-          console.error("WikiMasters Alert: réglage de l’enchère impossible", error);
-          toggle.checked = !toggle.checked;
+          if (/extension context invalidated/i.test(error?.message || "")) {
+            stopMonitoring();
+          } else {
+            console.error("WikiMasters Alert: réglage de l’enchère impossible", error);
+            toggle.checked = !toggle.checked;
+          }
         } finally {
           toggle.disabled = false;
         }
@@ -687,7 +746,7 @@
   function sendThresholdAlert(auction, cycle) {
     cycle.alerted = true;
 
-    chrome.runtime.sendMessage(
+    safeSendRuntimeMessage(
       {
         type: "AUCTION_THRESHOLD_REACHED",
         auction: {
@@ -698,11 +757,7 @@
           pageUrl: location.href
         }
       },
-      () => {
-        if (chrome.runtime.lastError) {
-          console.debug("WikiMasters Alert: service worker indisponible", chrome.runtime.lastError.message);
-        }
-      }
+      "WikiMasters Alert: service worker indisponible"
     );
   }
 
@@ -723,7 +778,7 @@
       reportedAt: now
     });
 
-    chrome.runtime.sendMessage(
+    safeSendRuntimeMessage(
       {
         type: "AUCTION_SNAPSHOT",
         auction: {
@@ -734,16 +789,16 @@
           pageUrl: location.href
         }
       },
-      () => {
-        if (chrome.runtime.lastError) {
-          console.debug("WikiMasters Alert: programmation différée indisponible", chrome.runtime.lastError.message);
-        }
-      }
+      "WikiMasters Alert: programmation différée indisponible"
     );
   }
 
   function scanPage() {
     scheduledScan = null;
+    if (!extensionContextAvailable()) {
+      stopMonitoring();
+      return;
+    }
     lastScanAt = Date.now();
     if (!settings.enabled) {
       return;
@@ -790,7 +845,7 @@
   }
 
   function scheduleScan() {
-    if (!settings.enabled || scheduledScan !== null) {
+    if (contextStopped || !settings.enabled || scheduledScan !== null) {
       return;
     }
 
@@ -826,8 +881,8 @@
       }
     });
 
-    const observer = new MutationObserver(scheduleScan);
-    observer.observe(document.documentElement, {
+    pageObserver = new MutationObserver(scheduleScan);
+    pageObserver.observe(document.documentElement, {
       childList: true,
       subtree: true,
       characterData: true,
@@ -840,7 +895,7 @@
       ]
     });
 
-    window.setInterval(scanPage, FALLBACK_SCAN_INTERVAL_MS);
+    fallbackScanTimer = window.setInterval(scanPage, FALLBACK_SCAN_INTERVAL_MS);
     scanPage();
   }
 
@@ -858,6 +913,7 @@
       findLabeledCountdownElements,
       isUsableAuctionTitle,
       cycleForAuction,
+      extensionContextAvailable,
       parseCountdown,
       readEmbeddedTimerValue
     });
@@ -877,7 +933,11 @@
     });
 
     initialize().catch((error) => {
-      console.error("WikiMasters Alert: initialisation impossible", error);
+      if (/extension context invalidated/i.test(error?.message || "")) {
+        stopMonitoring();
+      } else {
+        console.error("WikiMasters Alert: initialisation impossible", error);
+      }
     });
   }
 })();

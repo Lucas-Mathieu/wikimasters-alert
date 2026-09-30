@@ -487,7 +487,7 @@ async function runAlertOperation(operation, name = "focus") {
     const details = await operation();
     return { requested: true, ok: true, details: details || null };
   } catch (error) {
-    console.error(`WikiMasters Alert: canal ${name} en échec`, error);
+    console.warn(`WikiMasters Alert: canal ${name} en échec`, error);
     return {
       requested: true,
       ok: false,
@@ -660,12 +660,34 @@ async function focusTab(tabId, knownWindowId) {
     await chrome.windows.update(windowId, { state: "normal" });
   }
 
-  await chrome.tabs.update(tabId, { active: true });
+  await activateTabWithRetry(tabId);
   const focusedWindow = await chrome.windows.update(windowId, { focused: true });
 
   if (focusedWindow?.focused === false) {
     await chrome.windows.update(windowId, { drawAttention: true });
   }
+}
+
+async function activateTabWithRetry(tabId) {
+  const retryDelays = [0, 120, 240, 480];
+  let lastError;
+
+  for (const delay of retryDelays) {
+    if (delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    try {
+      return await chrome.tabs.update(tabId, { active: true });
+    } catch (error) {
+      lastError = error;
+      if (!/tabs cannot be edited right now/i.test(error?.message || "")) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 async function findWikiMastersTab() {

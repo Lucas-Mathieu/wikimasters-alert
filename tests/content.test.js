@@ -17,6 +17,7 @@ const context = vm.createContext({
 
 vm.runInContext(source, context, { filename: "content.js" });
 assert.ok(detector, "Le point d’entrée de test doit exposer le parseur");
+assert.equal(detector.extensionContextAvailable(), false);
 
 const detailPageText = `
   Retour au marché
