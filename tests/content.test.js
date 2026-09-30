@@ -18,6 +18,18 @@ const context = vm.createContext({
 vm.runInContext(source, context, { filename: "content.js" });
 assert.ok(detector, "Le point d’entrée de test doit exposer le parseur");
 
+const detailPageText = `
+  Retour au marché
+  Mise actuelle 230
+  Temps restant dans 19m 49s
+  Miser
+  Historique des mises (1)
+`;
+assert.equal(detector.isAuctionDetailPage(detailPageText), true);
+assert.equal(detector.isAuctionDetailPage("Marché Toutes les cartes Profil"), false);
+assert.equal(detector.hasExplicitTimerText("dans 19m 49s"), true);
+assert.equal(detector.hasExplicitTimerText("09:35"), false);
+
 const validCases = new Map([
   ["00:32", 32],
   ["0:32", 32],
@@ -28,6 +40,7 @@ const validCases = new Map([
   ["Temps restant : 01:05", 65],
   ["se termine dans 2 min 05 sec", 125],
   ["expire dans 40 secondes", 40],
+  ["dans 19m 49s", 1189],
   ["00 h : 00 min : 40 s", 40],
   ["1 h 2 min 3 sec", 3723],
   ["1 jour 2 h", 93600]

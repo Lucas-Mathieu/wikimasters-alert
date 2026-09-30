@@ -4,7 +4,9 @@
   const DEFAULT_SETTINGS = Object.freeze({
     enabled: true,
     thresholdSeconds: 30,
-    disabledAuctionIds: []
+    disabledAuctionIds: [],
+    auctionAlertsEnabledByDefault: true,
+    auctionAlertOverrides: {}
   });
 
   const FALLBACK_SCAN_INTERVAL_MS = 1000;
@@ -45,7 +47,9 @@
       "[aria-label*='countdown' i]",
       "[class*='countdown' i]",
       "[class*='timer' i]",
-      "[class*='remaining' i]"
+      "[class*='remaining' i]",
+      "[class*='time-left' i]",
+      "[class*='timeLeft' i]"
     ],
     titles: [
       "[data-auction-title]",
@@ -62,6 +66,14 @@
   const AUCTION_CONTEXT_PATTERN = /\b(?:ench[eè]res?|ench[eé]rir|auction|offres?|miser|mises?|prix actuel|bids?|vente)\b/i;
   const ACTIVE_CONTEXT_PATTERN = /\b(?:en cours|ouverte?|temps restant|reste|se termine|expire|fin dans|offres?)\b/i;
   const CLOSED_CONTEXT_PATTERN = /\b(?:termin[eé]e?|cl[oô]tur[eé]e?|ferm[eé]e?|expir[eé]e?|vendue?|annul[eé]e?)\b/i;
+  const DETAIL_PAGE_MARKERS = Object.freeze({
+    backToMarket: /retour\s+au\s+march[eé]/i,
+    bidHistory: /historique\s+des\s+mises/i,
+    currentBid: /mise\s+actuelle/i,
+    timeRemaining: /temps\s+restant/i,
+    bidAction: /\bmiser\b/i
+  });
+  const PAGE_TOGGLE_HOST_ID = "wikimasters-auction-alert-toggle";
 
   function normalizeText(value) {
     return String(value ?? "")
@@ -78,7 +90,7 @@
     }
 
     value = value
-      .replace(/^(?:(?:temps|dur[eé]e)\s+restant(?:e)?|reste|fin\s+dans|se\s+termine\s+dans|expire(?:ra|nt)?\s+dans|countdown)\s*[:\-]?\s*/i, "")
+      .replace(/^(?:(?:temps|dur[eé]e)\s+restant(?:e)?|reste|dans|fin\s+dans|se\s+termine\s+dans|expire(?:ra|nt)?\s+dans|countdown)\s*[:\-]?\s*/i, "")
       .replace(/\s*(?:restant(?:e)?s?)\s*$/i, "")
       .replace(/[.]$/, "")
       .trim();
@@ -105,6 +117,10 @@
 
     const [, days = 0, hours = 0, minutes = 0, seconds = 0] = unitsMatch;
     return Number(days) * 86400 + Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds);
+  }
+
+  function hasExplicitTimerText(value) {
+    return /\b(?:dans|restant|termine|expire)\b/i.test(normalizeText(value));
   }
 
   function selectorList(selectors) {
@@ -191,28 +207,67 @@
     }
   }
 
-  function findContextContainer(timerElement) {
+  function pageText() {
+    return normalizeText(document.body?.innerText || document.body?.textContent).slice(0, 60000);
+  }
+
+  function isAuctionDetailPage(text = pageText()) {
+    const hasBackLink = DETAIL_PAGE_MARKERS.backToMarket.test(text);
+    const hasPageStructure = hasBackLink && DETAIL_PAGE_MARKERS.bidHistory.test(text);
+    const hasAuctionPanel =
+      hasBackLink &&
+      DETAIL_PAGE_MARKERS.currentBid.test(text) &&
+      DETAIL_PAGE_MARKERS.timeRemaining.test(text) &&
+      DETAIL_PAGE_MARKERS.bidAction.test(text);
+
+    return hasPageStructure || hasAuctionPanel;
+  }
+
+  function findContextContainer(timerElement, detailPage) {
     const explicitContainer = safeClosest(timerElement, SELECTORS.auctionContainers);
     if (explicitContainer) {
-      return { element: explicitContainer, explicit: true };
+      return { element: explicitContainer, explicit: true, detailPage };
     }
 
     let current = timerElement.parentElement;
     let depth = 0;
 
-    while (current && current !== document.body && depth < 7) {
-      const text = normalizeText(current.textContent).slice(0, 1800);
+    let timePanel = null;
+    while (current && current !== document.body && depth < 12) {
+      const fullText = normalizeText(current.textContent);
+      const text = fullText.slice(0, 1800);
+      if (
+        detailPage &&
+        fullText.length <= 900 &&
+        DETAIL_PAGE_MARKERS.timeRemaining.test(text)
+      ) {
+        timePanel = current;
+      }
       if (AUCTION_CONTEXT_PATTERN.test(text)) {
-        return { element: current, explicit: false };
+        return {
+          element: current,
+          explicit: false,
+          detailPage,
+          nearTimeRemaining: Boolean(timePanel)
+        };
       }
       current = current.parentElement;
       depth += 1;
     }
 
+    if (detailPage) {
+      return {
+        element: timePanel || document.querySelector("main") || document.body,
+        explicit: false,
+        detailPage: true,
+        nearTimeRemaining: Boolean(timePanel)
+      };
+    }
+
     return null;
   }
 
-  function isCredibleAuctionTimer(timerElement, context) {
+  function isCredibleAuctionTimer(timerElement, timer, context, detailPageText) {
     if (!context) {
       return false;
     }
@@ -222,31 +277,56 @@
       return false;
     }
 
+    const semanticTimer = safeMatches(timerElement, SELECTORS.timers);
+    const explicitTimerText = hasExplicitTimerText(timer.sourceText);
+    if (context.detailPage && !context.nearTimeRemaining && !semanticTimer && !explicitTimerText) {
+      return false;
+    }
+
     let confidence = 0;
     if (context.explicit) confidence += 3;
     if (AUCTION_CONTEXT_PATTERN.test(contextText)) confidence += 3;
     if (ACTIVE_CONTEXT_PATTERN.test(contextText)) confidence += 2;
-    if (safeMatches(timerElement, SELECTORS.timers)) confidence += 2;
+    if (semanticTimer) confidence += 2;
     if (timerElement.hasAttribute("data-countdown") || timerElement.getAttribute("role") === "timer") {
       confidence += 2;
+    }
+    if (
+      context.detailPage &&
+      DETAIL_PAGE_MARKERS.currentBid.test(detailPageText) &&
+      DETAIL_PAGE_MARKERS.timeRemaining.test(detailPageText)
+    ) {
+      confidence += 4;
     }
 
     return confidence >= 5;
   }
 
-  function findAuctionTitle(container, timerElement) {
+  function isUsableAuctionTitle(element, timerElement) {
+    const title = normalizeText(element?.textContent);
+    return Boolean(
+      title &&
+      title.length <= 160 &&
+      element !== timerElement &&
+      parseCountdown(title) === null &&
+      !/^(?:ench[eè]re|auction)(?:\s+en\s+cours)?$/i.test(title)
+    );
+  }
+
+  function findAuctionTitle(container, timerElement, detailPage) {
     for (const selector of SELECTORS.titles) {
       const elements = container.querySelectorAll(selector);
       for (const element of elements) {
-        const title = normalizeText(element.textContent);
-        if (
-          title &&
-          title.length <= 160 &&
-          element !== timerElement &&
-          parseCountdown(title) === null &&
-          !/^(?:ench[eè]re|auction)(?:\s+en\s+cours)?$/i.test(title)
-        ) {
-          return title;
+        if (isUsableAuctionTitle(element, timerElement)) {
+          return normalizeText(element.textContent);
+        }
+      }
+    }
+
+    if (detailPage) {
+      for (const element of document.querySelectorAll("main h1, main h2, h1, h2")) {
+        if (isUsableAuctionTitle(element, timerElement)) {
+          return normalizeText(element.textContent);
         }
       }
     }
@@ -282,7 +362,7 @@
     return parts.reverse().join(">");
   }
 
-  function findAuctionId(container, timerElement, title) {
+  function findAuctionId(container, timerElement, title, detailPage) {
     const idAttributes = [
       "data-auction-id",
       "data-id",
@@ -297,6 +377,10 @@
           return `${attribute}:${value}`;
         }
       }
+    }
+
+    if (detailPage && location.pathname !== "/") {
+      return `page:${location.pathname}${location.search}`;
     }
 
     const auctionLink = container.querySelector("a[href*='auction' i], a[href*='enchere' i]");
@@ -322,6 +406,8 @@
 
   function findActiveAuctions() {
     const candidates = new Set();
+    const detailPageText = pageText();
+    const detailPage = isAuctionDetailPage(detailPageText);
     const containerSelector = selectorList(SELECTORS.auctionContainers);
     const explicitContainers = document.querySelectorAll(containerSelector);
 
@@ -335,8 +421,8 @@
     }
 
     // Repli générique borné pour les interfaces sans attribut ou classe sémantique.
-    if (candidates.size < 20) {
-      addCandidatesFrom(document, candidates, 1600);
+    if (candidates.size < 20 || detailPage) {
+      addCandidatesFrom(document, candidates, detailPage ? 4000 : 1600);
     }
 
     const auctionsById = new Map();
@@ -347,13 +433,13 @@
         continue;
       }
 
-      const context = findContextContainer(element);
-      if (!isCredibleAuctionTimer(element, context)) {
+      const context = findContextContainer(element, detailPage);
+      if (!isCredibleAuctionTimer(element, timer, context, detailPageText)) {
         continue;
       }
 
-      const title = findAuctionTitle(context.element, element);
-      const id = findAuctionId(context.element, element, title);
+      const title = findAuctionTitle(context.element, element, context.detailPage);
+      const id = findAuctionId(context.element, element, title, detailPage);
       const auction = {
         id,
         title,
@@ -368,6 +454,162 @@
     }
 
     return Array.from(auctionsById.values());
+  }
+
+  function normalizedOverrides() {
+    return settings.auctionAlertOverrides && typeof settings.auctionAlertOverrides === "object"
+      ? settings.auctionAlertOverrides
+      : {};
+  }
+
+  function isAuctionAlertEnabled(auctionId) {
+    const overrides = normalizedOverrides();
+    if (Object.prototype.hasOwnProperty.call(overrides, auctionId)) {
+      return overrides[auctionId] !== false;
+    }
+
+    if (Array.isArray(settings.disabledAuctionIds) && settings.disabledAuctionIds.includes(auctionId)) {
+      return false;
+    }
+
+    return settings.auctionAlertsEnabledByDefault !== false;
+  }
+
+  async function storeAuctionOverride(auctionId, enabled) {
+    const stored = await chrome.storage.local.get({ auctionAlertOverrides: {} });
+    const overrides = stored.auctionAlertOverrides && typeof stored.auctionAlertOverrides === "object"
+      ? { ...stored.auctionAlertOverrides }
+      : {};
+    overrides[auctionId] = Boolean(enabled);
+
+    const entries = Object.entries(overrides).slice(-500);
+    await chrome.storage.local.set({ auctionAlertOverrides: Object.fromEntries(entries) });
+  }
+
+  function removePageAuctionToggle() {
+    document.getElementById(PAGE_TOGGLE_HOST_ID)?.remove();
+  }
+
+  function updatePageAuctionToggle(activeAuctions) {
+    if (!isAuctionDetailPage() || activeAuctions.length === 0) {
+      removePageAuctionToggle();
+      return;
+    }
+
+    const auction = activeAuctions.reduce((closest, current) =>
+      current.secondsRemaining < closest.secondsRemaining ? current : closest
+    );
+    let host = document.getElementById(PAGE_TOGGLE_HOST_ID);
+
+    if (!host) {
+      host = document.createElement("div");
+      host.id = PAGE_TOGGLE_HOST_ID;
+      host.setAttribute("data-wikimasters-alert-ui", "true");
+      const shadow = host.attachShadow({ mode: "open" });
+      shadow.innerHTML = `
+        <style>
+          :host {
+            position: fixed;
+            right: 22px;
+            bottom: 22px;
+            z-index: 2147483647;
+            color-scheme: dark;
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          }
+          .card {
+            display: flex;
+            width: 286px;
+            align-items: center;
+            gap: 12px;
+            padding: 13px 14px;
+            border: 1px solid rgba(255, 255, 255, 0.13);
+            border-radius: 15px;
+            color: #f7f8fc;
+            background: rgba(23, 27, 38, 0.96);
+            box-shadow: 0 16px 42px rgba(0, 0, 0, 0.42);
+            backdrop-filter: blur(12px);
+          }
+          .mark {
+            display: grid;
+            flex: 0 0 auto;
+            width: 36px;
+            height: 36px;
+            place-items: center;
+            border-radius: 11px;
+            color: #fff;
+            background: linear-gradient(145deg, #5665f5, #754bd9);
+            font-size: 18px;
+            font-weight: 900;
+          }
+          .copy { min-width: 0; flex: 1; }
+          .label, .title { display: block; }
+          .label { font-size: 12px; font-weight: 800; }
+          .title {
+            margin-top: 3px;
+            overflow: hidden;
+            color: #aeb5c5;
+            font-size: 10px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+          input {
+            position: relative;
+            flex: 0 0 auto;
+            width: 40px;
+            height: 23px;
+            margin: 0;
+            border: 0;
+            border-radius: 999px;
+            appearance: none;
+            background: #555d70;
+            cursor: pointer;
+            transition: background 150ms ease;
+          }
+          input::after {
+            position: absolute;
+            top: 3px;
+            left: 3px;
+            width: 17px;
+            height: 17px;
+            border-radius: 50%;
+            background: #fff;
+            content: "";
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+            transition: transform 150ms ease;
+          }
+          input:checked { background: #5e67ed; }
+          input:checked::after { transform: translateX(17px); }
+          input:focus-visible { outline: 3px solid rgba(113, 122, 255, 0.38); outline-offset: 3px; }
+        </style>
+        <label class="card">
+          <span class="mark" aria-hidden="true">W</span>
+          <span class="copy">
+            <span class="label">Alerte pour cette enchère</span>
+            <span class="title"></span>
+          </span>
+          <input type="checkbox" role="switch" aria-label="Activer l’alerte pour cette enchère">
+        </label>
+      `;
+
+      const toggle = shadow.querySelector("input");
+      toggle.addEventListener("change", async () => {
+        toggle.disabled = true;
+        try {
+          await storeAuctionOverride(host.dataset.auctionId, toggle.checked);
+        } catch (error) {
+          console.error("WikiMasters Alert: réglage de l’enchère impossible", error);
+          toggle.checked = !toggle.checked;
+        } finally {
+          toggle.disabled = false;
+        }
+      });
+      document.documentElement.append(host);
+    }
+
+    host.dataset.auctionId = auction.id;
+    const shadow = host.shadowRoot;
+    shadow.querySelector(".title").textContent = auction.title;
+    shadow.querySelector("input").checked = isAuctionAlertEnabled(auction.id);
   }
 
   function cycleForAuction(auction, now) {
@@ -424,23 +666,19 @@
 
     const now = Date.now();
     const activeAuctions = findActiveAuctions();
-    const disabledAuctionIds = new Set(
-      Array.isArray(settings.disabledAuctionIds)
-        ? settings.disabledAuctionIds.filter((id) => typeof id === "string")
-        : []
-    );
+    updatePageAuctionToggle(activeAuctions);
     lastScanResult = {
       scannedAt: now,
       auctions: activeAuctions.map(({ id, title, secondsRemaining }) => ({
         id,
         title,
         secondsRemaining,
-        enabled: !disabledAuctionIds.has(id)
+        enabled: isAuctionAlertEnabled(id)
       }))
     };
 
     for (const auction of activeAuctions) {
-      if (disabledAuctionIds.has(auction.id)) {
+      if (!isAuctionAlertEnabled(auction.id)) {
         auctionCycles.delete(auction.id);
         continue;
       }
@@ -487,6 +725,7 @@
 
       if (!settings.enabled) {
         auctionCycles.clear();
+        removePageAuctionToggle();
       } else if (shouldScan) {
         scheduleScan();
       }
@@ -516,7 +755,12 @@
   };
 
   if (typeof globalThis.__WIKIMASTERS_TEST_HOOK__ === "function") {
-    globalThis.__WIKIMASTERS_TEST_HOOK__({ hashString, parseCountdown });
+    globalThis.__WIKIMASTERS_TEST_HOOK__({
+      hashString,
+      hasExplicitTimerText,
+      isAuctionDetailPage,
+      parseCountdown
+    });
   } else {
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message?.type !== "GET_MONITOR_STATUS") {
