@@ -29,6 +29,9 @@ assert.equal(detector.isAuctionDetailPage(detailPageText), true);
 assert.equal(detector.isAuctionDetailPage("Marché Toutes les cartes Profil"), false);
 assert.equal(detector.hasExplicitTimerText("dans 19m 49s"), true);
 assert.equal(detector.hasExplicitTimerText("09:35"), false);
+assert.equal(detector.indicatesClosedAuction("Se termine dans 22m 12s"), false);
+assert.equal(detector.indicatesClosedAuction("Expire dans 49s"), false);
+assert.equal(detector.indicatesClosedAuction("Enchère terminée"), true);
 assert.deepEqual(
   JSON.parse(JSON.stringify(detector.readEmbeddedTimerValue({ textContent: "Mise 60 · dans 1m 11s" }))),
   { seconds: 71, sourceText: "dans 1m 11s" }
@@ -38,6 +41,30 @@ assert.equal(
   71
 );
 assert.equal(detector.readEmbeddedTimerValue({ textContent: "30 sept., 09:35" }), null);
+
+const timerElement = { textContent: "Se termine dans 22m 12s" };
+const labelElement = { textContent: "Temps restant", parentElement: null };
+const timerRow = { children: [labelElement, timerElement] };
+labelElement.parentElement = timerRow;
+const fixtureRoot = {
+  querySelectorAll(selector) {
+    assert.equal(selector, "span");
+    return [labelElement, timerElement];
+  }
+};
+const labeledTimers = detector.findLabeledCountdownElements(fixtureRoot);
+assert.equal(labeledTimers.length, 1);
+assert.equal(labeledTimers[0], timerElement);
+
+const auctionFixture = fs.readFileSync(
+  path.join(__dirname, "fixtures", "auction-detail.html"),
+  "utf8"
+);
+const fixtureTimerText = auctionFixture.match(
+  /<span class="tabular-nums font-medium">([^<]+)<\/span>/
+)?.[1];
+assert.equal(fixtureTimerText, "Se termine dans 22m 12s");
+assert.equal(detector.parseCountdown(fixtureTimerText), 1332);
 
 const validCases = new Map([
   ["00:32", 32],

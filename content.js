@@ -49,7 +49,8 @@
       "[class*='timer' i]",
       "[class*='remaining' i]",
       "[class*='time-left' i]",
-      "[class*='timeLeft' i]"
+      "[class*='timeLeft' i]",
+      "span.tabular-nums.font-medium"
     ],
     titles: [
       "[data-auction-title]",
@@ -121,6 +122,14 @@
 
   function hasExplicitTimerText(value) {
     return /(?:dans(?=\s*\d|\b)|\b(?:restant|termine|expire)\b)/i.test(normalizeText(value));
+  }
+
+  function indicatesClosedAuction(value) {
+    const textWithoutActiveCountdown = normalizeText(value).replace(
+      /\b(?:se\s+termine|expire(?:ra)?)\s+dans\b/gi,
+      ""
+    );
+    return CLOSED_CONTEXT_PATTERN.test(textWithoutActiveCountdown);
   }
 
   function selectorList(selectors) {
@@ -207,6 +216,27 @@
     const seconds = parseCountdown(durationText);
 
     return seconds === null ? null : { seconds, sourceText: signal[0] };
+  }
+
+  function findLabeledCountdownElements(root = document) {
+    const matches = [];
+
+    for (const label of root.querySelectorAll("span")) {
+      if (normalizeText(label.textContent).toLocaleLowerCase("fr") !== "temps restant") {
+        continue;
+      }
+
+      const siblings = Array.from(label.parentElement?.children || []);
+      const timerElement = siblings.find((element) =>
+        element !== label && parseCountdown(element.textContent) !== null
+      );
+
+      if (timerElement) {
+        matches.push(timerElement);
+      }
+    }
+
+    return matches;
   }
 
   function addCandidatesFrom(root, candidates, limit = 250, allowEmbedded = false) {
@@ -301,7 +331,7 @@
     }
 
     const contextText = normalizeText(context.element.textContent).slice(0, 2200);
-    if (CLOSED_CONTEXT_PATTERN.test(contextText)) {
+    if (indicatesClosedAuction(contextText)) {
       return false;
     }
 
@@ -438,6 +468,10 @@
     const detailPage = isAuctionDetailPage(detailPageText);
     const containerSelector = selectorList(SELECTORS.auctionContainers);
     const explicitContainers = document.querySelectorAll(containerSelector);
+
+    for (const timer of findLabeledCountdownElements()) {
+      candidates.add(timer);
+    }
 
     for (let index = 0; index < explicitContainers.length && index < 100; index += 1) {
       addCandidatesFrom(explicitContainers[index], candidates, 160);
@@ -743,7 +777,9 @@
     globalThis.__WIKIMASTERS_TEST_HOOK__({
       hashString,
       hasExplicitTimerText,
+      indicatesClosedAuction,
       isAuctionDetailPage,
+      findLabeledCountdownElements,
       parseCountdown,
       readEmbeddedTimerValue
     });
